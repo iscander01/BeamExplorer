@@ -491,18 +491,26 @@ async function backfill(headHeight: number, headTs: Date): Promise<void> {
  * call ensures buckets for older trades exist — otherwise the UI sees only
  * the last few weeks even though the underlying `trades` table is complete.
  *
- * `refresh_continuous_aggregate(..., NULL, NULL)` must be called outside a
- * transaction; `pg` issues each query as its own statement, so this works.
+ * The window ends at the start of each view's current bucket. Materializing
+ * the open bucket would move the view's watermark past it, and real-time
+ * aggregation only appends raw rows at or after the watermark, so that bucket
+ * would stop updating until a refresh policy covers it again (up to two days
+ * on `candles_1d`).
+ *
+ * `refresh_continuous_aggregate` must be called outside a transaction; `pg`
+ * issues each query as its own statement, so this works.
  */
 async function refreshAllAggregates(): Promise<void> {
-  const views = [
-    'candles_1m', 'candles_5m', 'candles_15m',
-    'candles_1h', 'candles_4h', 'candles_1d',
-    'liquidity_1h',
+  const views: Array<[view: string, bucket: string]> = [
+    ['candles_1m', '1 minute'], ['candles_5m', '5 minutes'], ['candles_15m', '15 minutes'],
+    ['candles_1h', '1 hour'], ['candles_4h', '4 hours'], ['candles_1d', '1 day'],
+    ['liquidity_1h', '1 hour'],
   ];
-  for (const v of views) {
+  for (const [v, bucket] of views) {
     const t0 = Date.now();
-    await q(`CALL refresh_continuous_aggregate('${v}', NULL, NULL)`);
+    await q(
+      `CALL refresh_continuous_aggregate('${v}', NULL, time_bucket(INTERVAL '${bucket}', now()))`,
+    );
     logger.info({ view: v, ms: Date.now() - t0 }, 'continuous aggregate refreshed');
   }
   // Stamp the cursor with the height at refresh completion. A crash before
