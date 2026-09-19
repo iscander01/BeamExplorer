@@ -279,6 +279,7 @@ Repeated for 5m, 15m, 1h, 4h, 1d with these refresh windows:
 Notes:
 
 * `WHERE confirmed = TRUE` keeps unconfirmed trades out of candles. When the indexer flips `confirmed → TRUE` (80 blocks ≈ 80 min later), the next refresh re-materializes that bucket — the 80-block window sits inside every `start_offset`.
+* Migration 056 sets `timescaledb.materialized_only = false` on every candle view. The policies' `end_offset` equals the bucket width, so a materialized-only read would omit the open bucket and lag the newest closed one by up to two bucket widths; real-time aggregation appends the un-materialized tail from `trades` at query time.
 * `WITH NO DATA` means the initial backfill must be triggered manually; `indexer.ts:refreshAllAggregates()` calls `CALL refresh_continuous_aggregate(view, NULL, NULL)` once the historical backfill finishes.
 * `price_native` is already in canonical pool ordering (aid2 per aid1) and `volume_aid1` / `volume_aid2` are pre-computed at insert time (see `010_trades_price_volume.sql`), so the aggregates need no joins.
 
