@@ -55,6 +55,56 @@ export interface ListOpts {
  * column so we materialize the entire CTE first. Acceptable at ~100 pools.
  */
 export async function listPairs(opts: ListOpts): Promise<PairRowRaw[]> {
+  const optsKey = cacheKey(opts);
+  if (optsKey === null) return fetchPairs(opts);
+
+  const key = `${await readLastIndexedHeight()}|${optsKey}`;
+  const hit = cached.get(key);
+  if (hit && Date.now() - hit.at < ROLLING_WINDOW_MAX_AGE_MS) return hit.promise;
+
+  const entry = { at: Date.now(), promise: fetchPairs(opts) };
+  if (cached.size >= MAX_CACHE_ENTRIES) cached.clear();
+  cached.set(key, entry);
+  try {
+    return await entry.promise;
+  } catch (err) {
+    // Never cache a failure — the next caller retries immediately.
+    if (cached.get(key) === entry) cached.delete(key);
+    throw err;
+  }
+}
+
+// Four LATERALs planned against `trades` (177 chunks) and `pool_state_snapshots`
+// (178) cost ~250ms warm on prod, and the site's main 30s poll is the only
+// caller that was paying it uncached. `search` is user input and `poolIds`
+// callers are already narrow, so neither is cached — that keeps the key space
+// bounded to the catalog shapes. Caching the promise, not the value, also
+// collapses concurrent misses into one query.
+//
+// Reserves, prices and TVL only change when the indexer writes a block, so the
+// indexed height is the exact invalidation event and leads the key. The 24h
+// LATERALs are a rolling wall-clock window, though: at constant height their
+// figures still drift as trades age out the back. The age bound covers only
+// that drift, which is why it is a ceiling rather than the primary mechanism.
+const ROLLING_WINDOW_MAX_AGE_MS = 60_000;
+const MAX_CACHE_ENTRIES = 32;
+const cached = new Map<string, { at: number; promise: Promise<PairRowRaw[]> }>();
+
+function cacheKey(opts: ListOpts): string | null {
+  if (opts.search !== undefined || opts.poolIds !== undefined) return null;
+  return [opts.sort_by, opts.order, opts.limit, opts.offset, opts.kind ?? '', opts.include_imposters].join('|');
+}
+
+/** Primary-key read on the one-row `cursor` table; the indexer stamps it after
+ *  every write, so it doubles as the version of everything derived from one. */
+async function readLastIndexedHeight(): Promise<number> {
+  const { rows } = await q<{ h: string }>(
+    'SELECT last_indexed_height::text AS h FROM cursor WHERE id = 1',
+  );
+  return rows[0] ? Number(rows[0].h) : 0;
+}
+
+async function fetchPairs(opts: ListOpts): Promise<PairRowRaw[]> {
   const sortColumn = ({
     tvl_usd: 'tvl_aid1_groth',
     volume_24h_usd: 'volume_24h_aid1',
