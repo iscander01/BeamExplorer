@@ -5571,7 +5571,6 @@ __metadata:
     mini-css-extract-plugin: "npm:^2.2.0"
     prettier: "npm:^2.8.8"
     react: "npm:^17.0.1"
-    react-content-loader: "npm:^6.2.1"
     react-custom-scrollbars: "npm:^4.2.1"
     react-dom: "npm:^17.0.1"
     react-grab: "npm:^0.1.29"
@@ -11649,15 +11648,6 @@ __metadata:
     iconv-lite: "npm:~0.4.24"
     unpipe: "npm:~1.0.0"
   checksum: 10c0/449844344fc90547fb994383a494b83300e4f22199f146a79f68d78a199a8f2a923ea9fd29c3be979bfd50291a3884733619ffc15ba02a32e703b612f8d3f74a
-  languageName: node
-  linkType: hard
-
-"react-content-loader@npm:^6.2.1":
-  version: 6.2.1
-  resolution: "react-content-loader@npm:6.2.1"
-  peerDependencies:
-    react: ">=16.0.0"
-  checksum: 10c0/65968a9ec46cffdc7017c0aa68f6b4f5770c1c6e1677d0eb70f7c553a6a3b9385e8bcae570152e6a006812c81a575dce401c07192b3ac49c64654c4b0cce0d80
   languageName: node
   linkType: hard
 
