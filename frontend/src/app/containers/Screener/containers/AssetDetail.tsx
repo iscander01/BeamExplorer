@@ -5,7 +5,8 @@ import AssetIcon, { normalizeOptColor } from '@app/shared/components/AssetsIcon'
 import { AssetLabel } from '@app/shared/components/AssetLabel';
 import { BlockHeight } from '@app/shared/components/BlockHeight';
 import { BackButton } from '@app/shared/components/BackButton';
-import { useAsset, useAssetDistribution, useAssetHistory, usePairs } from '../hooks';
+import { useAsset, useAssetDistribution, useAssetHistory } from '../hooks';
+import { useSharedAssetIndex } from '../assetColors';
 import { MOBILE_MEDIA } from '../components/responsive';
 import { fmt$, fmtNum, pairUrlId } from '../components/format';
 import { KindBadge } from '../components/KindBadge';
@@ -205,8 +206,8 @@ export const AssetDetail: React.FC = () => {
     loading: distLoading,
     error: distError,
   } = useAssetDistribution(aid !== undefined && tab === 'distribution' ? aid : undefined);
-  // Pull all pairs so we can show pool ticker symbols + USD valuations next to pool ids.
-  const { data: pairsResp } = usePairs({ limit: 500 });
+  // Pool rows only need the two leg symbols; the shared catalogue already has them.
+  const assetIndex = useSharedAssetIndex();
 
   const supplyPoints = useMemo(() => {
     if (!history || !asset) return [];
@@ -231,19 +232,6 @@ export const AssetDetail: React.FC = () => {
   const maxSupplyLabel = maxSupplyHuman !== null ? fmtNum(maxSupplyHuman, 0) : asset.minter_cid ? 'Unlimited' : '—';
   const supplyPct =
     supplyHuman !== null && maxSupplyHuman !== null && maxSupplyHuman > 0 ? (supplyHuman / maxSupplyHuman) * 100 : null;
-  const pairsByPool = new Map<
-    number,
-    { sym1: string | null; sym2: string | null; kind: number; tvl_usd: number | null }
-  >();
-  for (const p of pairsResp?.pairs ?? []) {
-    pairsByPool.set(p.pair_id, {
-      sym1: p.symbol1,
-      sym2: p.symbol2,
-      kind: p.kind,
-      tvl_usd: p.tvl_usd,
-    });
-  }
-
   // Issuer label. Contract-issued assets (DEX LP tokens, Asset Minter tokens,
   // Nephrite, BeamX, …) carry an owner_cid; we show the contract's parser name
   // (or a generic "Contract" when unknown) plus a shortened, clickable CID that
@@ -426,7 +414,8 @@ export const AssetDetail: React.FC = () => {
               {[...asset.pools]
                 .sort((a, b) => (b.tvl_usd ?? -Infinity) - (a.tvl_usd ?? -Infinity))
                 .map((pool) => {
-                  const meta = pairsByPool.get(pool.pair_id);
+                  const sym1 = assetIndex.get(pool.aid1)?.short_name ?? null;
+                  const sym2 = assetIndex.get(pool.aid2)?.short_name ?? null;
                   const amt = pool.amount !== null ? Number(pool.amount) / 10 ** asset.decimals : null;
                   const pct =
                     amt !== null && supplyHuman !== null && supplyHuman > 0 ? (amt / supplyHuman) * 100 : null;
@@ -435,7 +424,7 @@ export const AssetDetail: React.FC = () => {
                       key={pool.pair_id}
                       onClick={() => navigate(`/pair/${pairUrlId(pool.aid1, pool.aid2, pool.kind)}`)}
                     >
-                      <td>{meta ? `${meta.sym1 ?? '?'}/${meta.sym2 ?? '?'}` : `Pool #${pool.pair_id}`}</td>
+                      <td>{sym1 || sym2 ? `${sym1 ?? '?'}/${sym2 ?? '?'}` : `Pool #${pool.pair_id}`}</td>
                       <td>
                         <KindBadge kind={pool.kind} />
                       </td>
