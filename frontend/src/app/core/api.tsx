@@ -46,14 +46,34 @@ export function toContractCallConfig(shader: ShaderRuntimeConfig | null | undefi
   };
 }
 
+// invoke_contract runs the AMM *app* shader, and the wallet only has that
+// bytecode once a call has supplied it via `contract` — with none loaded it
+// fails with "missing shader code" (beam shaders_manager.cpp, nextRequest).
+// Fetched once per page and sent on every call so no caller depends on
+// another having gone first.
+let ammShader: Promise<number[]> | null = null;
+function loadAmmShader(): Promise<number[]> {
+  if (ammShader) return ammShader;
+  const pending: Promise<number[]> = connector
+    .downloadShader('./amm.wasm')
+    .then((bytes: Uint8Array) => Array.from(bytes))
+    .catch((err: unknown) => {
+      // Never cache a failure — the next call retries the download.
+      if (ammShader === pending) ammShader = null;
+      throw err;
+    });
+  ammShader = pending;
+  return pending;
+}
+
 /**
  * Call invoke_contract and return { shaderResult, rawData }.
  * We call callApi directly (not invokeContract) so we retain raw_data
  * alongside the parsed shader output.
  */
 async function invokeRaw(args: string, contractBytes?: number[] | null) {
-  const params: Record<string, any> = { create_tx: false, args };
-  if (contractBytes) params.contract = contractBytes;
+  const contract = contractBytes ?? (await loadAmmShader());
+  const params: Record<string, any> = { create_tx: false, args, contract };
 
   const result = await callApiWithRecovery('invoke_contract', params);
 
