@@ -116,13 +116,6 @@ async function readCursor(): Promise<number> {
   return Number(rows[0]!.last_indexed_height);
 }
 
-async function readAggregatesMarker(): Promise<number> {
-  const { rows } = await q<{ h: string }>(
-    'SELECT aggregates_refreshed_at_height AS h FROM cursor WHERE id = 1',
-  );
-  return rows[0] ? Number(rows[0].h) : 0;
-}
-
 async function bumpAggregatesMarker(height: number): Promise<void> {
   await q(
     'UPDATE cursor SET aggregates_refreshed_at_height = $1 WHERE id = 1 AND aggregates_refreshed_at_height < $1',
@@ -521,19 +514,16 @@ async function refreshAllAggregates(): Promise<void> {
 }
 
 /**
- * Run on indexer startup: if the marker lags `last_indexed_height`, the
- * previous process crashed mid-backfill or before the post-backfill refresh.
- * Re-run the full materialization so the chart sees every bucket.
+ * Run on indexer startup. Always refreshes every aggregate up to the current
+ * bucket: refresh policies only cover their `start_offset` window, so trades
+ * ingested for an older range while the indexer was down (or by a backfill
+ * that crashed before its post-backfill refresh) would otherwise never be
+ * materialized. With no pending invalidations the refresh is a no-op.
  */
-async function catchUpAggregatesIfNeeded(): Promise<void> {
+async function refreshAggregatesOnStartup(): Promise<void> {
   const last = await readCursor();
   if (last === 0) return; // nothing indexed yet
-  const marker = await readAggregatesMarker();
-  if (marker >= last) return; // up to date
-  logger.warn(
-    { last_indexed_height: last, aggregates_marker: marker },
-    'continuous aggregates stale (likely from interrupted backfill); refreshing',
-  );
+  logger.info({ last_indexed_height: last }, 'refreshing continuous aggregates on startup');
   await refreshAllAggregates();
 }
 
@@ -560,13 +550,8 @@ async function steadyTick(headHeight: number, headTs: Date, headHash: string | u
   const promoted = await promoteToConfirmed(headHeight);
 
   await updateCursor(headHeight, headHash);
-  // Don't touch the aggregates marker here. In steady state the continuous
-  // aggregate refresh policies + real-time aggregation handle the recent
-  // window. The marker exists to record "refreshAllAggregates completed for
-  // the full history up to this height" — only refreshAllAggregates may
-  // advance it. Bumping it from steady-state would mask an interrupted
-  // backfill (where refreshAllAggregates never ran) and leave the views
-  // permanently empty.
+  // The aggregates marker records the height of the last full refresh and
+  // is only advanced by refreshAllAggregates.
 
   logger.info(
     { from: last + 1, to: headHeight, ...counts, promoted },
@@ -646,11 +631,11 @@ async function loop(): Promise<void> {
   );
 
   try {
-    await catchUpAggregatesIfNeeded();
+    await refreshAggregatesOnStartup();
   } catch (err) {
     logger.error(
       { err: err instanceof Error ? err.message : err },
-      'startup aggregate catch-up failed; continuing',
+      'startup aggregate refresh failed; continuing',
     );
   }
 

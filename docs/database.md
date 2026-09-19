@@ -196,7 +196,7 @@ CREATE TABLE cursor (
 INSERT INTO cursor (id, last_indexed_height) VALUES (1, 0);
 ```
 
-The `aggregates_refreshed_at_height` field is how the indexer recovers from a crash mid-backfill: if it lags `last_indexed_height` on startup, `catchUpAggregatesIfNeeded()` re-runs `refresh_continuous_aggregate(view, NULL, NULL)` for every candle/liquidity view.
+The `aggregates_refreshed_at_height` field records the height at which `refreshAllAggregates()` last completed. The indexer runs that refresh on every startup (`refreshAggregatesOnStartup()`) and after a backfill, so trades ingested outside the refresh policies' `start_offset` windows still get materialized.
 
 ### `dex_stats` — slow-aggregate cache
 
@@ -280,7 +280,7 @@ Notes:
 
 * `WHERE confirmed = TRUE` keeps unconfirmed trades out of candles. When the indexer flips `confirmed → TRUE` (80 blocks ≈ 80 min later), the next refresh re-materializes that bucket — the 80-block window sits inside every `start_offset`.
 * Migration 056 sets `timescaledb.materialized_only = false` on every candle view. The policies' `end_offset` equals the bucket width, so a materialized-only read would omit the open bucket and lag the newest closed one by up to two bucket widths; real-time aggregation appends the un-materialized tail from `trades` at query time.
-* `WITH NO DATA` means the initial backfill must be triggered manually; `indexer.ts:refreshAllAggregates()` calls `CALL refresh_continuous_aggregate(view, NULL, NULL)` once the historical backfill finishes.
+* `WITH NO DATA` means the initial backfill must be triggered manually; `indexer.ts:refreshAllAggregates()` calls `CALL refresh_continuous_aggregate(view, NULL, time_bucket(width, now()))` on startup and once the historical backfill finishes. The window stops at the current bucket so the open bucket is never materialized (see migration 056).
 * `price_native` is already in canonical pool ordering (aid2 per aid1) and `volume_aid1` / `volume_aid2` are pre-computed at insert time (see `010_trades_price_volume.sql`), so the aggregates need no joins.
 
 ## Liquidity continuous aggregate

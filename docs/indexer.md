@@ -119,7 +119,7 @@ See `backend/src/parsers/oracle.ts`.
 
 ```
 ON START:
-  catchUpAggregatesIfNeeded()        # re-refresh continuous aggregates if a prior backfill was interrupted
+  refreshAggregatesOnStartup()       # refresh every continuous aggregate up to the current bucket
   loop forever:
     maybeSyncAssetsCatalog()         # every 10 min: /assets + /minter + /status?exp_am=1 + imposters
     maybeKickDexStatsRefresh()       # fire-and-forget background recompute of slow total_volume_usd
@@ -146,7 +146,7 @@ while from < head:
   indexCalls(from + 1, to)                                  # writes to trades / lp_events / pools
   updateCursor(to, undefined)                               # no hash mid-backfill — reorg only matters near tip
   from = to
-refreshAllAggregates()                                      # full refresh_continuous_aggregate(view, NULL, NULL)
+refreshAllAggregates()                                      # refresh_continuous_aggregate(view, NULL, <current bucket start>)
 ```
 
 The backfill mode skips per-page pool snapshots and per-page oracle inserts; those are overwritten by the steady-state tick that follows. The pool snapshot up front captures the current pool set so trades inside the backfill window can be matched to a `pool_id`.
@@ -159,7 +159,6 @@ snapshotPoolStates(head, headTs)   # upsert per-pool reserves into pool_state_sn
 indexCalls(last + 1, head)         # the real work
 promoteToConfirmed(head)           # flip confirmed=TRUE on rows past head − CONFIRMATIONS
 updateCursor(head, headHash)
-bumpAggregatesMarker(head)
 ```
 
 Pool snapshot runs **before** call ingest. If a `Trade` row references a pool that was created earlier in the same batch, `resolvePoolId` would return null and the trade would be dropped — but the snapshot upserts every pool currently on-chain, so the row exists by the time `indexCalls` runs.
