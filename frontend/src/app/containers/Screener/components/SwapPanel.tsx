@@ -26,14 +26,21 @@ const UsdHint = styled.span`
 `;
 
 const FlipWrap = styled.div`
+  /* A fixed-height seam with the button flex-centred in it. Deriving the
+     seam from the button's own height plus negative margins placed the disc
+     a few px low in the wallet's Chrome 83. */
   display: flex;
+  align-items: center;
   justify-content: center;
-  margin: -2px 0;
+  /* 32px button + 6px clear of each box. */
+  height: 44px;
+  line-height: 0;
   position: relative;
   z-index: 1;
 `;
 
 const FlipBtn = styled.button`
+  flex: none;
   width: 32px;
   height: 32px;
   border-radius: 50%;
@@ -44,11 +51,36 @@ const FlipBtn = styled.button`
   display: flex;
   align-items: center;
   justify-content: center;
+  /* The arrow glyphs are wider than the content box the UA's default
+     1px/6px button padding leaves, so they render off-centre wherever that
+     default differs - visibly so in the wallet's Chrome 83. */
+  padding: 0;
+  line-height: 1;
   cursor: pointer;
   transition: all 0.15s;
   &:hover {
     background: var(--color-green);
     color: var(--color-dark-blue);
+  }
+`;
+
+const RateFlipBtn = styled.button`
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+  margin-left: 4px;
+  cursor: pointer;
+  &:hover {
+    color: white;
   }
 `;
 
@@ -382,7 +414,7 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
     <Panel>
       <h4>Trade</h4>
 
-      <Box mb={4}>
+      <Box mb={0}>
         <BoxHeader>
           <span>You Pay</span>
           <UsdHint>
@@ -412,7 +444,23 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
 
       <FlipWrap>
         <FlipBtn type="button" onClick={flip} title="Flip direction" aria-label="Flip swap direction">
-          ↕
+          {/* Inline SVG rather than the ↕ glyph: the glyph's ink offset depends on
+              the fallback font, which is visibly off-centre in the wallet's Chrome 83. */}
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 14 14"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            focusable="false"
+            style={{ display: 'block' }}
+          >
+            <path d="M7 1.5v11M3.5 5L7 1.5 10.5 5M3.5 9L7 12.5 10.5 9" />
+          </svg>
         </FlipBtn>
       </FlipWrap>
 
@@ -446,24 +494,9 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
           <InfoRow>
             <span>
               Rate{' '}
-              <button
-                type="button"
-                onClick={() => setFlipRate((f) => !f)}
-                style={{
-                  background: 'rgba(255,255,255,0.08)',
-                  color: 'rgba(255,255,255,0.6)',
-                  border: 'none',
-                  width: 18,
-                  height: 18,
-                  borderRadius: '50%',
-                  fontSize: 10,
-                  cursor: 'pointer',
-                  marginLeft: 4,
-                }}
-                title="Flip"
-              >
+              <RateFlipBtn type="button" onClick={() => setFlipRate((f) => !f)} title="Flip">
                 ⇄
-              </button>
+              </RateFlipBtn>
             </span>
             <span>
               {flipRate

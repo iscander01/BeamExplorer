@@ -406,6 +406,10 @@ const FlipRateBtn = styled.button`
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  /* See FlipBtn in SwapPanel: the UA's default button padding clips the arrow
+     glyph's content box and shifts it off-centre in the wallet's Chrome 83. */
+  padding: 0;
+  line-height: 1;
   &:hover {
     background: rgba(255, 255, 255, 0.12);
     color: white;
