@@ -108,15 +108,17 @@ async function fetchJson<T>(path: string): Promise<T> {
     try {
       const { statusCode, body } = await request(url, { method: 'GET' });
       if (statusCode >= 500) {
+        await body.dump();
         lastErr = new ExplorerHttpError(statusCode, url);
       } else if (statusCode >= 400) {
-        // Non-retryable client error
         const text = await body.text();
         throw new ExplorerHttpError(statusCode, url, text.slice(0, 200));
       } else {
         return (await body.json()) as T;
       }
     } catch (err) {
+      // 4xx is the explorer's final answer; only network and 5xx failures retry.
+      if (err instanceof ExplorerHttpError && err.statusCode < 500) throw err;
       lastErr = err;
     }
 
