@@ -2127,6 +2127,8 @@ interface HdrsRow {
   cols: Record<string, number | null>;
 }
 
+const EMPTY_HDRS_ROWS: HdrsRow[] = [];
+
 function extractHdrsRows(data: any, colCodes: string): HdrsRow[] {
   if (!data || typeof data !== 'object' || data.type !== 'table' || !Array.isArray(data.value)) return [];
   const dataRows: unknown[][] = (data.value as unknown[]).slice(1).filter(Array.isArray) as unknown[][];
@@ -2562,7 +2564,7 @@ interface ChartSeries {
   ticks: { values: number[]; min: number; max: number };
 }
 
-function HdrsChart({
+const HdrsChart = React.memo(function HdrsChart({
   rows,
   plotted,
   colors,
@@ -2705,6 +2707,21 @@ function HdrsChart({
     const frac = (value - lo) / (hi - lo);
     return PLOT_H - PAD_Y - inner * frac; // invert: larger value = higher up
   }, []);
+
+  // One points string per series, rebuilt only when the data or scale changes —
+  // not on every hover render.
+  const seriesPoints = useMemo(
+    () =>
+      series.map((s) => {
+        if (n < 2) return '';
+        const svgPts: string[] = [];
+        for (let i = 0; i < n; i += 1) {
+          svgPts.push(`${xAt(i).toFixed(2)},${yFor(s, s.raw[i]!).toFixed(2)}`);
+        }
+        return svgPts.join(' ');
+      }),
+    [series, n, xAt, yFor],
+  );
 
   // Cursor: nearest row index under the mouse (null when not hovering).
   const [cursor, setCursor] = useState<number | null>(null);
@@ -3179,16 +3196,12 @@ function HdrsChart({
               {/* One single continuous polyline per enabled series through ALL
                   points — faithful to drawGraph. Missing cells are already 0,
                   so there are no gaps to split on. Needs >=2 points to draw. */}
-              {series.map((s) => {
+              {series.map((s, si) => {
                 if (n < 2) return null;
-                const svgPts: string[] = [];
-                for (let i = 0; i < n; i += 1) {
-                  svgPts.push(`${xAt(i).toFixed(2)},${yFor(s, s.raw[i]!).toFixed(2)}`);
-                }
                 return (
                   <polyline
                     key={s.code}
-                    points={svgPts.join(' ')}
+                    points={seriesPoints[si]}
                     fill="none"
                     stroke={s.color}
                     strokeWidth={1.6}
@@ -3466,7 +3479,7 @@ function HdrsChart({
       )}
     </ChartCard>
   );
-}
+});
 
 // Render the hdrs data table with a graph checkbox injected into every
 // graphable column header (the reference's `th.graphable` checkbox). Height
@@ -3491,7 +3504,7 @@ const HdrsPager = styled.div`
   }
 `;
 
-function HdrsTable({
+const HdrsTable = React.memo(function HdrsTable({
   data,
   colCodes,
   plotted,
@@ -3584,7 +3597,7 @@ function HdrsTable({
       )}
     </ScrollX>
   );
-}
+});
 
 // Rows ⇄ Timeframe segmented toggle.
 const SegToggle = styled.div`
@@ -3852,7 +3865,11 @@ function HdrsView({ data, view, ctx }: { data: any; view: ViewState; ctx: Render
     setColorOverrides((cur) => ({ ...cur, [code]: color }));
   }, []);
 
-  const chartRows = useMemo(() => extractHdrsRows(data, activeCols), [data, activeCols]);
+  // Parsed only while the chart section is open — it is the only consumer.
+  const chartRows = useMemo(
+    () => (chartOpen ? extractHdrsRows(data, activeCols) : EMPTY_HDRS_ROWS),
+    [chartOpen, data, activeCols],
+  );
 
   const apply = useCallback(
     (overrides?: { cols?: string; nMax?: string; hMax?: string; dh?: string }): void => {
@@ -4352,7 +4369,21 @@ export const BeamExplorer: React.FC = () => {
     [view, setView],
   );
 
+  // The fetch is keyed on the request the view resolves to, not on the view
+  // object: `chart`, `expand`, `plot` and `q` only steer the render, and a
+  // change to them must not refetch (for a paginated hdrs view that is a chain
+  // of up to 22 requests). Views that resolve to no request key on their type
+  // so the redirect below still fires when moving between two such views.
+  const requestUrl = useMemo(() => buildRequestUrl(view), [view]);
+  const fetchKey = requestUrl ?? `none:${view.type}`;
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const goRef = useRef(go);
+  goRef.current = go;
+
   useEffect(() => {
+    const { current: view } = viewRef; // eslint-disable-line @typescript-eslint/no-shadow
+    const { current: go } = goRef; // eslint-disable-line @typescript-eslint/no-shadow
     if (view.type === 'historical') {
       setData(null);
       setError(null);
@@ -4403,7 +4434,7 @@ export const BeamExplorer: React.FC = () => {
       });
 
     return () => controller.abort();
-  }, [view, go]);
+  }, [fetchKey]);
 
   const ctx: RenderCtx = useMemo(
     () => ({ go, network: view.network, viewType: view.type }),

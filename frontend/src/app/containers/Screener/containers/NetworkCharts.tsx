@@ -23,7 +23,7 @@ import {
   LINE_STYLE_DASH,
 } from '../components/BlackholeChart';
 import { KeyedLinesChart, buildKeyedColors, type SeriesFill } from '../components/KeyedLinesChart';
-import { downloadBlob, downloadSvgAsPng } from '../components/chart-compare/download';
+import { csvField, downloadBlob, downloadSvgAsPng, escapeXml } from '../components/chart-compare/download';
 import { fmtHashrate } from './explorer/shared';
 import { LADDERS, MAX_POINTS, type ZoomRes } from '../lib/zoomResolution';
 import {
@@ -682,9 +682,6 @@ function fmtVol(v: number): string {
   return `${v.toFixed(v >= 100 ? 0 : 1)}%`;
 }
 
-// Native token units (no currency symbol) for the multi-series axes/tooltips.
-const fmtNative = fmtNativeUnits;
-
 function toCsv(series: ReadonlyArray<ApiChartPoint>, title: string): string {
   const lines = [`# ${title}`, 'timestamp_iso,timestamp_unix,value'];
   for (const p of series) {
@@ -692,8 +689,6 @@ function toCsv(series: ReadonlyArray<ApiChartPoint>, title: string): string {
   }
   return `${lines.join('\n')}\n`;
 }
-
-const escapeXml = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
 // `count` evenly-spaced values across [min, max], inclusive of both ends.
 function axisTicks(min: number, max: number, count: number): number[] {
@@ -768,9 +763,6 @@ function toSvg(
 
 // CSV in long ("tidy") format — one row per (asset, point) so the multi-series
 // data round-trips into a spreadsheet/dataframe cleanly.
-function csvField(s: string): string {
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
 
 // One line of a multi-series chart, flattened to the shape the exporters need:
 // `id` is whatever identifies the line (an aid for Black Hole, a bridge/asset
@@ -1794,7 +1786,7 @@ export const NetworkCharts: React.FC = () => {
       key: 'blackhole',
       title: 'Black Hole (assets burned)',
       multiState: blackhole,
-      formatter: fmtNative,
+      formatter: fmtNativeUnits,
       // Cumulative burn balances: a quiet day holds the previous total.
       fill: 'hold',
       category: 'defi',
@@ -1840,12 +1832,12 @@ export const NetworkCharts: React.FC = () => {
     },
     {
       // Per-asset balances are in each asset's own units, not USD — the lines
-      // span 4.6M BEAM and 0.014 BTC, so the axis needs fmtNative's
+      // span 4.6M BEAM and 0.014 BTC, so the axis needs fmtNativeUnits'
       // magnitude-adaptive precision rather than a currency format.
       key: 'bridgeTvlByAsset',
       title: 'Bridge TVL by asset',
       keyedState: bridgeTvlByAsset,
-      formatter: fmtNative,
+      formatter: fmtNativeUnits,
       // Locked balances: a bucket with no bridge activity holds its level.
       fill: 'hold',
       category: 'defi',

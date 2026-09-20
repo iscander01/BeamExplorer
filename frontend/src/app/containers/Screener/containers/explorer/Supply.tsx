@@ -279,9 +279,10 @@ export const Supply: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [height]);
 
-  // Re-render markers when any toggle flips.
+  // A toggle only changes the marker set on the live total series; the chart,
+  // its data and the user's pan/zoom stay as they are.
   useEffect(() => {
-    if (dataRef.current) renderChart(dataRef.current);
+    if (dataRef.current && seriesRef.current.total) applyMarkers(dataRef.current);
     try {
       localStorage.setItem('supplyChartShowHalvings', showHalvings ? 'true' : 'false');
       localStorage.setItem('supplyChartShowForks', showForks ? 'true' : 'false');
@@ -293,8 +294,8 @@ export const Supply: React.FC = () => {
   }, [showHalvings, showForks, showSpecial]);
 
   // Dispose the chart on unmount — renderChart only removes the *previous*
-  // instance on re-render, so without this the last chart's canvas + WebGL
-  // context leak every time the Supply page is navigated away from.
+  // instance on re-render, so without this the last chart's canvases leak
+  // every time the Supply page is navigated away from.
   useEffect(
     () => () => {
       chartRef.current?.remove();
@@ -348,7 +349,14 @@ export const Supply: React.FC = () => {
     sMiner.setData(data.miner as LineData[]);
     sTrea.setData(data.treasury as LineData[]);
     sRew.setData(data.reward as LineData[]);
+    applyMarkers(data);
+    chart.timeScale().fitContent();
+  }
 
+  // Markers of the enabled kinds on the total-supply line.
+  function applyMarkers(data: ChartData): void {
+    const sTotal = seriesRef.current.total;
+    if (!sTotal) return;
     const shownKinds = {
       halving: showHalvings,
       fork: showForks,
@@ -365,7 +373,6 @@ export const Supply: React.FC = () => {
           text: m.label,
         })),
     );
-    chart.timeScale().fitContent();
   }
 
   const manualCheck = useCallback((): void => {

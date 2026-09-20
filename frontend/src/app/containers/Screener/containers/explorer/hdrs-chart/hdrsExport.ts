@@ -2,6 +2,7 @@
 // lives in chart-compare/download; this file only builds the CSV/SVG strings.
 
 import type { DeltaMode, DeltaTableModel } from '../../../components/chart-compare/types';
+import { csvField, escapeXml } from '../../../components/chart-compare/download';
 
 export interface HdrsExportRow {
   height: number;
@@ -13,10 +14,6 @@ export interface HdrsExportRow {
 export interface HdrsExportSeries {
   id: string;
   label: string;
-}
-
-function csvField(s: string): string {
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 export function buildHdrsCsv(rows: HdrsExportRow[], series: HdrsExportSeries[], title: string): string {
@@ -50,8 +47,6 @@ export interface HdrsSvgModel {
   deltaTable?: DeltaTableModel; // per-series value/Δ table rendered below the chart
   deltaMode?: DeltaMode; // labels the table header (Consecutive / Baseline)
 }
-
-const escapeXml = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
 export function buildHdrsSvg(m: HdrsSvgModel): string {
   const { width: W, height: H } = m;

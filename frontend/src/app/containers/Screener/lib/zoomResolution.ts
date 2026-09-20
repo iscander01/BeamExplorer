@@ -1,6 +1,5 @@
 export type ZoomRes = '1m' | '1h' | '1d' | '1M';
 export const MAX_POINTS = 2000;
-export const TILE_BUCKETS = 256;
 
 const FULL: ZoomRes[] = ['1m', '1h', '1d'];
 const DAILY: ZoomRes[] = ['1d'];

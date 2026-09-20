@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useMemo, useRef } from 'react';
 import { normalizeOptColor } from '@app/shared/components/AssetsIcon';
-import { useAssets, usePolled } from './hooks';
-import { api } from './api/client';
+import { useAssets } from './hooks';
 import type { ApiAssetsList } from './api/types';
 
 type AssetsState = ReturnType<typeof useAssets>;
@@ -13,7 +12,7 @@ type AssetEntry = ApiAssetsList['assets'][number];
 // raw catalogue state (so pages don't each poll the same endpoint) and an
 // aid → hex map so any AssetIcon can be tinted without per-row fetches.
 const AssetColorsCtx = createContext<Map<number, string>>(new Map());
-// `null` means no provider is mounted — consumers then poll on their own.
+// `null` means no provider is mounted — consumers throw rather than fetch.
 const AssetsCtx = createContext<AssetsState | null>(null);
 
 export const AssetColorsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -56,12 +55,12 @@ export function useAssetColor(aid: number | null | undefined): string | undefine
   return aid != null ? map.get(aid) : undefined;
 }
 
-/** The `/api/assets` catalogue from the provider's single poll; falls back to
- *  an own poll only when no AssetColorsProvider is mounted above. */
+/** The `/api/assets` catalogue from the provider's single poll. Throws when no
+ *  AssetColorsProvider is mounted above, so a stray consumer fails at dev time. */
 export function useSharedAssets(): AssetsState {
   const shared = useContext(AssetsCtx);
-  const own = usePolled(() => api.assets(), [], 60_000, shared === null);
-  return shared ?? own;
+  if (shared === null) throw new Error('useSharedAssets: no AssetColorsProvider above this component');
+  return shared;
 }
 
 /** aid → catalogue entry over `useSharedAssets`, rebuilt only when the

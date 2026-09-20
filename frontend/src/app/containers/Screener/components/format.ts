@@ -230,11 +230,6 @@ export function fmtNativeUnits(v: number): string {
   });
 }
 
-/** Initials fallback when an asset has no icon — first 2 chars of symbol. */
-export function initials(symbol: string | null): string {
-  return (symbol || '??').slice(0, 2).toUpperCase();
-}
-
 /** Stable pair URL: "<aid1>_<aid2>_<kind>". Underscore form is deep-link-safe
  *  (no accidental URL escaping when shared) and matches the public scheme. */
 export function pairUrlId(aid1: number, aid2: number, kind: number): string {

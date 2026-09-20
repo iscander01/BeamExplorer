@@ -1,6 +1,13 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { styled } from '@linaria/react';
-import { PriceScaleMode, type IChartApi, type ISeriesApi, type LineData, type UTCTimestamp } from 'lightweight-charts';
+import {
+  PriceScaleMode,
+  type IChartApi,
+  type ISeriesApi,
+  type LineData,
+  type LineSeriesPartialOptions,
+  type UTCTimestamp,
+} from 'lightweight-charts';
 import { PALLETE_ASSETS } from '@app/shared/constants';
 import { theme } from '../containers/explorer/shared/theme';
 import { clearChildren, createBeamChart, makeSpan } from './chartTheme';
@@ -122,6 +129,11 @@ export function resampleKeyed(
   return out;
 }
 
+// Row height and header+padding of the crosshair tooltip, used to work out how
+// many rows fit the plot before the list has to be windowed.
+const TIP_ROW_PX = 14;
+const TIP_CHROME_PX = 32;
+
 const Wrap = styled.div`
   width: 100%;
   height: 100%;
@@ -130,8 +142,9 @@ const Wrap = styled.div`
   flex-direction: column;
 `;
 
-// flex/grid `gap` isn't supported on the wallet's QtWebEngine 5.15.2
-// (Chrome 83) — spacing comes from margins.
+// Legend strip above the plot. Wraps to multiple rows and scrolls if it
+// overflows, so it never eats the whole cell. flex/grid `gap` isn't supported
+// on the wallet's QtWebEngine 5.15.2 (Chrome 83) — spacing comes from margins.
 const Legend = styled.div`
   flex: 0 0 auto;
   max-height: 84px;
@@ -171,6 +184,8 @@ const LegendItem = styled.button<{ off?: boolean }>`
   }
 `;
 
+// Relative wrapper so an overlay can be absolutely positioned over the chart
+// plot (and only the plot — not the legend).
 const Plot = styled.div`
   position: relative;
   flex: 1 1 auto;
@@ -183,8 +198,10 @@ const Inner = styled.div`
   height: 100%;
 `;
 
-// Crosshair readout, positioned imperatively (translate3d) from the crosshair
-// handler so a mouse move costs no React render.
+// Crosshair readout: every visible series' value at the hovered instant,
+// biggest first, with the line nearest the cursor highlighted so a single
+// series can be followed across the plot. Positioned imperatively (translate3d)
+// from the crosshair handler — no React render per mouse move.
 const Tooltip = styled.div`
   position: absolute;
   top: 0;
@@ -220,6 +237,11 @@ const Tooltip = styled.div`
     color: rgba(255, 255, 255, 0.95);
   }
 
+  & > .row.rest {
+    padding-left: 16px;
+    color: rgba(255, 255, 255, 0.4);
+  }
+
   & > .row > .sw {
     flex: 0 0 auto;
     width: 10px;
@@ -240,24 +262,72 @@ const Tooltip = styled.div`
   }
 `;
 
+/** Live chart internals for overlays drawn over the plot (markers, popovers). */
+export interface KeyedChartHandle {
+  chart: IChartApi;
+  /** Line per series key. The map is rebuilt in place when the data changes. */
+  series: ReadonlyMap<string, ISeriesApi<'Line'>>;
+  host: HTMLDivElement;
+}
+
 interface Props {
   series: ReadonlyArray<ApiKeyedSeries>;
   logScale?: boolean;
   formatter: (v: number) => string;
   /** Whether a gap means "the level still holds" or "nothing happened". */
   fill?: SeriesFill;
+  /** Colour per key; defaults to `buildKeyedColors`. */
+  colors?: Map<string, string>;
+  /** Plotted points per key; defaults to `resampleKeyed(series, fill)`. */
+  data?: Map<string, LineData[]>;
+  /** Extra line options per key (line style, step type). */
+  lineOptions?: (key: string) => LineSeriesPartialOptions;
+  /** Tooltip row label; defaults to the series label. */
+  rowLabel?: (s: ApiKeyedSeries) => string;
+  /** Window the tooltip to the rows that fit the plot, around the focused line,
+   *  and count the rest — for charts with more lines than a grid cell shows. */
+  windowRows?: boolean;
+  /** Extra legend content after a series' label. */
+  legendExtra?: (s: ApiKeyedSeries) => React.ReactNode;
+  /** Legend swatch style per key (mirrors a per-series line style). */
+  swatchStyle?: (key: string) => React.CSSProperties;
+  /** Hidden series, when the parent owns that state. */
+  hidden?: Set<string>;
+  onHiddenChange?: (hidden: Set<string>) => void;
+  /** Receives the live chart internals while the chart exists. */
+  handleRef?: React.MutableRefObject<KeyedChartHandle | null>;
+  /** Overlays rendered inside the plot, above the chart. */
+  children?: React.ReactNode;
 }
 
 /** Multi-line chart for series identified by string key. Click a legend entry
  *  to hide a line, double-click to isolate it. */
-export const KeyedLinesChart: React.FC<Props> = ({ series, logScale = false, formatter, fill = 'hold' }) => {
+export const KeyedLinesChart: React.FC<Props> = ({
+  series,
+  logScale = false,
+  formatter,
+  fill = 'hold',
+  colors: colorsProp,
+  data: dataProp,
+  lineOptions,
+  rowLabel,
+  windowRows = false,
+  legendExtra,
+  swatchStyle,
+  hidden: hiddenProp,
+  onHiddenChange,
+  handleRef,
+  children,
+}) => {
   const innerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<Map<string, ISeriesApi<'Line'>>>(new Map());
   const tooltipRef = useRef<HTMLDivElement>(null);
-  // Pinned price range, read by every series' autoscaleInfoProvider so a
-  // horizontal pan doesn't rescale the y-axis every frame.
+  // Pinned price range (full extent of the visible series), read by every
+  // series' autoscaleInfoProvider so a horizontal pan doesn't rescale the
+  // y-axis every frame. Kept in a ref so the providers see the latest value.
   const priceRangeRef = useRef<{ min: number; max: number } | null>(null);
+  // Series currently thickened under the crosshair.
   const focusedRef = useRef<string | null>(null);
   // Cached tooltip rows so a mouse move rewrites text instead of rebuilding
   // the element list. `sig` is the key order they were built in.
@@ -266,16 +336,27 @@ export const KeyedLinesChart: React.FC<Props> = ({ series, logScale = false, for
     when: HTMLDivElement | null;
     rows: Map<string, { row: HTMLDivElement; val: HTMLSpanElement }>;
   }>({ sig: '', when: null, rows: new Map() });
-  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [ownHidden, setOwnHidden] = useState<Set<string>>(new Set());
+  const hidden = hiddenProp ?? ownHidden;
+  const setHidden = useCallback(
+    (next: Set<string>): void => {
+      if (onHiddenChange) onHiddenChange(next);
+      else setOwnHidden(next);
+    },
+    [onHiddenChange],
+  );
 
-  const colorByKey = useMemo(() => buildKeyedColors(series), [series]);
-  const chartData = useMemo(() => resampleKeyed(series, fill), [series, fill]);
+  const colorByKey = useMemo(() => colorsProp ?? buildKeyedColors(series), [colorsProp, series]);
+  const chartData = useMemo(() => dataProp ?? resampleKeyed(series, fill), [dataProp, series, fill]);
 
   // Latest view state for the crosshair handler, which subscribes once per
   // chart and must not close over stale values.
-  const viewRef = useRef({ series, colorByKey, hidden, formatter });
-  viewRef.current = { series, colorByKey, hidden, formatter };
+  const viewRef = useRef({ series, colorByKey, hidden, formatter, rowLabel, windowRows });
+  viewRef.current = { series, colorByKey, hidden, formatter, rowLabel, windowRows };
 
+  // Full price extent across the *visible* series (recomputed only when the
+  // data or legend selection changes — never on pan). Padded slightly in log
+  // space so the top/bottom lines aren't flush against the frame.
   const priceRange = useMemo(() => {
     let min = Infinity;
     let max = -Infinity;
@@ -292,27 +373,34 @@ export const KeyedLinesChart: React.FC<Props> = ({ series, logScale = false, for
     return { min: min * 0.6, max: max * 1.6 };
   }, [series, hidden]);
 
+  // Push the pinned range to the providers and re-run the auto-scale so the
+  // y-axis settles on the new (stable) extent when the selection changes.
   useEffect(() => {
     priceRangeRef.current = priceRange;
     chartRef.current?.priceScale('right').applyOptions({ autoScale: true });
   }, [priceRange]);
 
+  // Re-create the chart only when the formatter changes (it's applied at
+  // construction). logScale / data / visibility are handled by the dedicated
+  // effects below so toggling them doesn't drop the data.
   useEffect(() => {
     const el = innerRef.current;
     if (!el) return undefined;
     const chart = createBeamChart(el, {
-      // Pin the price-axis gutter. Without it the gutter resizes as tick labels
-      // change width ("5.00k" → "4.60M"), reflowing the plot every frame.
+      // Pin the price-axis gutter width. Without this, the gutter resizes as
+      // tick labels change width during a vertical drag ("5.00k" → "500.00M"),
+      // reflowing the whole plot every frame — the "erratic" y-axis flicker.
       rightPriceScale: { minimumWidth: 88 },
       timeScale: { minBarSpacing: 0.01 },
     });
     chartRef.current = chart;
+    if (handleRef) handleRef.current = { chart, series: seriesRef.current, host: el };
 
     chart.subscribeCrosshairMove((param) => {
       const tip = tooltipRef.current;
       const host = innerRef.current;
       if (!tip || !host) return;
-      const { series: ser, colorByKey: colors, hidden: hid, formatter: fmt } = viewRef.current;
+      const { series: ser, colorByKey: colors, hidden: hid, formatter: fmt, rowLabel: label, windowRows: win } = viewRef.current;
 
       const rows: Array<{ key: string; label: string; value: number; y: number | null }> = [];
       if (param && param.time != null && param.point) {
@@ -322,7 +410,7 @@ export const KeyedLinesChart: React.FC<Props> = ({ series, logScale = false, for
           if (!line) continue;
           const d = param.seriesData.get(line) as { value?: number } | undefined;
           if (!d || typeof d.value !== 'number') continue;
-          rows.push({ key: s.key, label: s.label, value: d.value, y: line.priceToCoordinate(d.value) });
+          rows.push({ key: s.key, label: label ? label(s) : s.label, value: d.value, y: line.priceToCoordinate(d.value) });
         }
       }
 
@@ -353,7 +441,26 @@ export const KeyedLinesChart: React.FC<Props> = ({ series, logScale = false, for
         for (const [key, line] of seriesRef.current) line.applyOptions({ lineWidth: key === focus ? 3 : 2 });
       }
 
-      const sig = rows.map((r) => r.key).join(',');
+      // A short grid cell can't show every row — keep a window around the line
+      // under the cursor (the one being followed) and count the rest.
+      let shown = rows;
+      let more = 0;
+      if (win) {
+        const maxRows = Math.max(3, Math.floor((host.clientHeight - TIP_CHROME_PX) / TIP_ROW_PX));
+        if (rows.length > maxRows) {
+          const fi = Math.max(
+            0,
+            rows.findIndex((r) => r.key === focus),
+          );
+          const span = maxRows - 1;
+          const start = Math.min(Math.max(0, fi - Math.floor(span / 2)), rows.length - span);
+          shown = rows.slice(start, start + span);
+          more = rows.length - shown.length;
+        }
+      }
+
+      // Rebuild the row elements only when the set/order of series changes.
+      const sig = `${shown.map((r) => r.key).join(',')}|${more}`;
       const cache = tipRowsRef.current;
       if (cache.sig !== sig) {
         clearChildren(tip);
@@ -363,7 +470,7 @@ export const KeyedLinesChart: React.FC<Props> = ({ series, logScale = false, for
         whenRow.className = 'when';
         tip.appendChild(whenRow);
         cache.when = whenRow;
-        for (const r of rows) {
+        for (const r of shown) {
           const row = document.createElement('div');
           row.className = 'row';
           const sw = makeSpan('sw');
@@ -376,9 +483,15 @@ export const KeyedLinesChart: React.FC<Props> = ({ series, logScale = false, for
           tip.appendChild(row);
           cache.rows.set(r.key, { row, val });
         }
+        if (more > 0) {
+          const rest = document.createElement('div');
+          rest.className = 'row rest';
+          rest.appendChild(makeSpan('lbl', `+${more} more`));
+          tip.appendChild(rest);
+        }
       }
       if (cache.when) cache.when.textContent = fmtDayLocal(param.time as number);
-      for (const r of rows) {
+      for (const r of shown) {
         const node = cache.rows.get(r.key);
         if (!node) continue;
         node.val.textContent = fmt(r.value);
@@ -395,11 +508,12 @@ export const KeyedLinesChart: React.FC<Props> = ({ series, logScale = false, for
     });
 
     return () => {
+      if (handleRef) handleRef.current = null;
       chart.remove();
       chartRef.current = null;
       seriesRef.current.clear();
     };
-  }, [formatter]);
+  }, [formatter, handleRef]);
 
   useEffect(() => {
     chartRef.current?.priceScale('right').applyOptions({
@@ -423,10 +537,14 @@ export const KeyedLinesChart: React.FC<Props> = ({ series, logScale = false, for
         crosshairMarkerVisible: true,
         visible: !hidden.has(s.key),
         priceFormat: { type: 'custom', formatter, minMove: 0.00000001 },
+        // Pin auto-scale to the whole-series extent so sideways panning never
+        // rescales the y-axis. Returns null until the range is known, and is
+        // ignored once the user manually drags the price axis (autoScale off).
         autoscaleInfoProvider: () => {
           const r = priceRangeRef.current;
           return r ? { priceRange: { minValue: r.min, maxValue: r.max } } : null;
         },
+        ...(lineOptions ? lineOptions(s.key) : {}),
       });
       line.setData(chartData.get(s.key) ?? []);
       seriesRef.current.set(s.key, line);
@@ -454,29 +572,25 @@ export const KeyedLinesChart: React.FC<Props> = ({ series, logScale = false, for
     // `hidden` is applied by the effect below so a legend toggle doesn't
     // rebuild every series.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [series, chartData, colorByKey, formatter]);
+  }, [series, chartData, colorByKey, formatter, lineOptions]);
 
   useEffect(() => {
     for (const [key, line] of seriesRef.current) line.applyOptions({ visible: !hidden.has(key) });
   }, [hidden]);
 
   const toggle = (key: string): void => {
-    setHidden((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+    const next = new Set(hidden);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    setHidden(next);
   };
 
   // Double-click isolates one line, and a second double-click brings them all
   // back. The two single clicks that precede it toggle the same key twice — a
   // net no-op — so this needs no click timer.
   const isolate = (key: string): void => {
-    setHidden((prev) => {
-      const alone = !prev.has(key) && series.every((s) => s.key === key || prev.has(s.key));
-      return alone ? new Set<string>() : new Set(series.filter((s) => s.key !== key).map((s) => s.key));
-    });
+    const alone = !hidden.has(key) && series.every((s) => s.key === key || hidden.has(s.key));
+    setHidden(alone ? new Set<string>() : new Set(series.filter((s) => s.key !== key).map((s) => s.key)));
   };
 
   return (
@@ -489,16 +603,18 @@ export const KeyedLinesChart: React.FC<Props> = ({ series, logScale = false, for
             off={hidden.has(s.key)}
             onClick={() => toggle(s.key)}
             onDoubleClick={() => isolate(s.key)}
-            title={hidden.has(s.key) ? 'Show' : 'Hide (double-click to isolate)'}
+            title={`${hidden.has(s.key) ? 'Show' : 'Hide'} ${s.label} — double-click to show only this`}
           >
-            <i style={{ borderTopColor: colorByKey.get(s.key) }} />
+            <i style={{ borderTopColor: colorByKey.get(s.key), ...(swatchStyle ? swatchStyle(s.key) : undefined) }} />
             {s.label}
+            {legendExtra ? legendExtra(s) : null}
           </LegendItem>
         ))}
       </Legend>
       <Plot>
         <Inner ref={innerRef} />
         <Tooltip ref={tooltipRef} />
+        {children}
       </Plot>
     </Wrap>
   );

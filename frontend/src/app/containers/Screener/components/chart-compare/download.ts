@@ -38,3 +38,11 @@ export function downloadSvgAsPng(svg: string, filename: string, scale = 2): void
   };
   img.src = svgUrl;
 }
+
+/** Quote a CSV cell when it holds a comma, quote or newline. */
+export function csvField(s: string): string {
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/** Escape text for an SVG/XML text node. */
+export const escapeXml = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
