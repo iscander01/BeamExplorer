@@ -416,8 +416,8 @@ async function maybeSyncAssetsCatalog(): Promise<void> {
  * pages. Pool snapshots happen once at the end (we don't snapshot per page —
  * it'd just rewrite the same final state).
  */
-async function backfill(headHeight: number, headTs: Date): Promise<void> {
-  let from = await readCursor();
+async function backfill(headHeight: number, headTs: Date, cursorHeight: number): Promise<void> {
+  let from = cursorHeight;
 
   if (from === 0) {
     // Prefer the operator-provided deploy height (DEX_DEPLOY_HEIGHT in env).
@@ -527,8 +527,12 @@ async function refreshAggregatesOnStartup(): Promise<void> {
   await refreshAllAggregates();
 }
 
-async function steadyTick(headHeight: number, headTs: Date, headHash: string | undefined): Promise<void> {
-  const last = await readCursor();
+async function steadyTick(
+  headHeight: number,
+  headTs: Date,
+  headHash: string | undefined,
+  last: number,
+): Promise<void> {
   if (headHeight <= last) {
     logger.debug({ head: headHeight, last }, 'no new blocks');
     return;
@@ -572,7 +576,9 @@ async function tick(): Promise<void> {
 
   // Reorg check BEFORE any new ingest. If the chain rewrote our last-indexed
   // block, the cursor (and tables) get rewound to a common ancestor first.
-  await detectAndHealReorg();
+  // Nothing below writes the cursor until ingest, so its height here is the
+  // tick's `last`.
+  const { height: last } = await detectAndHealReorg();
 
   const status = await getStatus();
   // Stamp the observed chain head so /api/health can render a lag badge
@@ -606,16 +612,15 @@ async function tick(): Promise<void> {
   const headHash = status.hash;
   await primeBlockTs(status.height, headTs, headHash);
 
-  const last = await readCursor();
   // If we're a long way behind, run in backfill mode (calls only, no per-page
   // pool snapshots or oracle inserts — those are expensive and overwritten
   // by the steady-state tick that follows).
   if (status.height - last > BACKFILL_PAGE_SIZE) {
-    await backfill(status.height, headTs);
+    await backfill(status.height, headTs, last);
     return;
   }
 
-  await steadyTick(status.height, headTs, headHash);
+  await steadyTick(status.height, headTs, headHash, last);
 }
 
 async function loop(): Promise<void> {

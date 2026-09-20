@@ -25,15 +25,41 @@ function priceAid2PerAid1(volumeAid1: bigint, volumeAid2: bigint): string {
 }
 
 /**
+ * Every AMM call in [hMin, hMax], newest first, across as many explorer pages
+ * as the window needs.
+ *
+ * `/contract?nMaxTxs=N` walks calls from hMax downwards and stops at the
+ * first block boundary after N rows, so a page always holds whole blocks.
+ * When it stopped short the table carries `more.hMax`: the highest height the
+ * page did not cover. The next page is simply [hMin, more.hMax] — no split
+ * block, no overlap.
+ */
+export async function fetchCallsRange(hMin: number, hMax: number): Promise<AmmCall[]> {
+  const calls: AmmCall[] = [];
+  let pageMax = hMax;
+  for (;;) {
+    const resp = await getContract({
+      id: config.DEX_CID,
+      state: false,
+      hMin,
+      hMax: pageMax,
+      nMaxTxs: MAX_CALLS_PER_PAGE,
+    });
+    calls.push(...parseCallsHistory(resp));
+    const next = nextPageMax(resp);
+    if (next === undefined || next < hMin || next >= pageMax) break;
+    logger.info(
+      { hMin, hMax, page_max: pageMax, next_max: next, calls: calls.length },
+      'calls page hit nMaxTxs cap; continuing from explorer cursor',
+    );
+    pageMax = next;
+  }
+  return calls;
+}
+
+/**
  * Fetches AMM contract calls in [hMin, hMax] and writes trades / lp_events.
  * Returns counts for logging.
- *
- * The explorer caps any single `/contract?nMaxTxs=N` response at N rows (and
- * N is bounded server-side; 2000 is the hard ceiling). When a height window
- * has more calls than the cap, the tail is silently dropped. We detect cap-hit
- * on the raw response (see pageTruncated) and recursively split the range in
- * half until each sub-window fits — `ON CONFLICT DO NOTHING` on the inserts
- * makes re-covering a boundary cheap.
  *
  * Caller is responsible for advancing the cursor *after* this completes.
  */
@@ -41,36 +67,7 @@ export async function indexCalls(
   hMin: number,
   hMax: number,
 ): Promise<{ trades: number; lp: number; lifecycle: number; skipped: number }> {
-  const resp = await getContract({
-    id: config.DEX_CID,
-    state: false,
-    hMin,
-    hMax,
-    nMaxTxs: MAX_CALLS_PER_PAGE,
-  });
-  const truncated = pageTruncated(resp);
-  const calls = parseCallsHistory(resp);
-
-  // Cap-hit on a >1-block window means data was truncated — split and recurse.
-  // A single block hitting the cap is exceptional (no realistic AMM has 2000
-  // calls in one block); log and process what we got.
-  if (truncated && hMax > hMin) {
-    const mid = Math.floor((hMin + hMax) / 2);
-    logger.info(
-      { hMin, hMax, calls: calls.length, limit: MAX_CALLS_PER_PAGE, split_at: mid },
-      'page hit nMaxTxs cap; splitting range',
-    );
-    const [a, b] = await Promise.all([
-      indexCalls(hMin, mid),
-      indexCalls(mid + 1, hMax),
-    ]);
-    return {
-      trades:    a.trades    + b.trades,
-      lp:        a.lp        + b.lp,
-      lifecycle: a.lifecycle + b.lifecycle,
-      skipped:   a.skipped   + b.skipped,
-    };
-  }
+  const calls = await fetchCallsRange(hMin, hMax);
 
   if (calls.length === 0) {
     return { trades: 0, lp: 0, lifecycle: 0, skipped: 0 };
@@ -117,30 +114,16 @@ export async function indexCalls(
   await flushTrades(tradeRows);
   await flushLpEvents(lpRows);
 
-  if (truncated && hMin === hMax) {
-    logger.warn(
-      { height: hMin, calls: calls.length, limit: MAX_CALLS_PER_PAGE },
-      'single block exceeded nMaxTxs cap — data beyond limit silently lost',
-    );
-  }
-
   return { trades, lp, lifecycle, skipped };
 }
 
-/**
- * Whether the explorer cut the "Calls history" page short. Judged on the raw
- * response, not on the parsed AMM calls: parseCallsHistory drops rows it
- * doesn't recognise (nested fee skims, unknown methods), so a full page can
- * parse to well under the cap and hide the truncation. Prefers the explorer's
- * `more` marker on the table when it sends one; otherwise the raw row count
- * (minus the header row) reaching the cap.
- */
-function pageTruncated(resp: ContractResponse): boolean {
+/** The explorer's continuation cursor for a "Calls history" page, if it cut
+ *  the page short; judged on the raw table, since parseCallsHistory drops
+ *  rows it does not recognise. */
+function nextPageMax(resp: ContractResponse): number | undefined {
   const table = resp['Calls history'];
   const more = table?.more ?? (resp as { more?: { hMax?: number } }).more;
-  if (more?.hMax != null) return true;
-  const rawRows = (table?.value.length ?? 1) - 1;
-  return rawRows >= MAX_CALLS_PER_PAGE;
+  return more?.hMax ?? undefined;
 }
 
 type WriteOutcome = 'trade' | 'lp' | 'lifecycle' | 'skipped';

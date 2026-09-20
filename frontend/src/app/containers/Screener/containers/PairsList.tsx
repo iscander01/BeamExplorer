@@ -365,12 +365,18 @@ const PairRow = React.memo(({ p, idx, fav, onOpen, onToggleFav }: PairRowProps) 
 
 function sortValue(p: ApiPair, key: SortKey): number {
   switch (key) {
-    case 'tvl_usd': return p.tvl_usd ?? -Infinity;
-    case 'volume_24h_usd': return p.volume_24h_usd ?? -Infinity;
-    case 'price_change_24h': return p.price_change_24h ?? -Infinity;
-    case 'trades_24h': return p.trades_24h;
-    case 'aid2': return p.aid2;
-    default: return -Infinity;
+    case 'tvl_usd':
+      return p.tvl_usd ?? -Infinity;
+    case 'volume_24h_usd':
+      return p.volume_24h_usd ?? -Infinity;
+    case 'price_change_24h':
+      return p.price_change_24h ?? -Infinity;
+    case 'trades_24h':
+      return p.trades_24h;
+    case 'aid2':
+      return p.aid2;
+    default:
+      return -Infinity;
   }
 }
 

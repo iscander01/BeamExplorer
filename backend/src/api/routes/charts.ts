@@ -757,48 +757,33 @@ interface ChartDef {
   refreshMs?: number;
 }
 
-// Network-stats group is fetched once and split into ten series; this group
-// lives behind a single in-memory promise so we don't hit the explorer eleven
-// times per refresh.
-let networkSeriesInflight: Promise<NetworkSeries> | null = null;
-let networkSeriesAt = 0;
-const NETWORK_SERIES_TTL_MS = 30 * 60 * 1000;
-async function getNetworkSeries(): Promise<NetworkSeries> {
-  const now = Date.now();
-  if (now - networkSeriesAt > NETWORK_SERIES_TTL_MS) networkSeriesInflight = null;
-  if (!networkSeriesInflight) {
-    networkSeriesInflight = fetchNetworkSeries()
-      .then((s) => { networkSeriesAt = Date.now(); return s; })
-      .catch((err) => { networkSeriesInflight = null; throw err; });
-  }
-  return networkSeriesInflight;
-}
-function netFetcher(key: keyof NetworkSeries): () => Promise<SeriesPoint[]> {
-  return async () => {
-    const s = await getNetworkSeries();
-    return s[key] as ChartPoint[];
+// Each network-stats group is fetched once and split into its series; the
+// group lives behind a single in-memory promise so a refresh hits the
+// explorer once, not once per chart. A failed fetch is never cached.
+function memoTtl(fetch: () => Promise<NetworkSeries>, ttlMs: number): () => Promise<NetworkSeries> {
+  let inflight: Promise<NetworkSeries> | null = null;
+  let at = 0;
+  return () => {
+    if (Date.now() - at > ttlMs) inflight = null;
+    if (!inflight) {
+      inflight = fetch()
+        .then((s) => { at = Date.now(); return s; })
+        .catch((err) => { inflight = null; throw err; });
+    }
+    return inflight;
   };
 }
+const getNetworkSeries = memoTtl(fetchNetworkSeries, 30 * 60 * 1000);
+// Recent data: refresh more often.
+const getNetworkSeriesHourly = memoTtl(fetchNetworkSeriesHourly, 10 * 60 * 1000);
 
-let networkSeriesHourlyInflight: Promise<NetworkSeries> | null = null;
-let networkSeriesHourlyAt = 0;
-const NETWORK_SERIES_HOURLY_TTL_MS = 10 * 60 * 1000; // recent data: refresh more often
-async function getNetworkSeriesHourly(): Promise<NetworkSeries> {
-  const now = Date.now();
-  if (now - networkSeriesHourlyAt > NETWORK_SERIES_HOURLY_TTL_MS) networkSeriesHourlyInflight = null;
-  if (!networkSeriesHourlyInflight) {
-    networkSeriesHourlyInflight = fetchNetworkSeriesHourly()
-      .then((s) => { networkSeriesHourlyAt = Date.now(); return s; })
-      .catch((err) => { networkSeriesHourlyInflight = null; throw err; });
-  }
-  return networkSeriesHourlyInflight;
+function seriesFetcher(group: () => Promise<NetworkSeries>, key: keyof NetworkSeries): () => Promise<SeriesPoint[]> {
+  return async () => (await group())[key] as ChartPoint[];
 }
-function netFetcherHourly(key: keyof NetworkSeries): () => Promise<SeriesPoint[]> {
-  return async () => {
-    const s = await getNetworkSeriesHourly();
-    return s[key] as ChartPoint[];
-  };
-}
+const netFetcher = (key: keyof NetworkSeries): (() => Promise<SeriesPoint[]>) => seriesFetcher(getNetworkSeries, key);
+const netFetcherHourly = (key: keyof NetworkSeries): (() => Promise<SeriesPoint[]>) => (
+  seriesFetcher(getNetworkSeriesHourly, key)
+);
 
 const CHART_DEFS: ReadonlyArray<ChartDef> = [
   { name: 'hashrate',   ...levelSql('hashrate'),   maxAgeSec: 600 },

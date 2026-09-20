@@ -113,7 +113,7 @@ async function fetchAllRows(): Promise<ExplorerRow[]> {
   const all: ExplorerRow[] = [];
   let cursor: number | undefined;
   // Safety cap: explorer rows are descending; we stop when no `more.hMax` is
-  // returned or we hit a sane upper bound (5000 pages × 2000 rows is well
+  // returned or we hit a sane upper bound (50 pages × 2000 rows is well
   // beyond Beam's mainnet age at dh=1440).
   for (let i = 0; i < 50; i += 1) {
     const { rows, nextHMax } = await fetchPage(cursor);
@@ -175,26 +175,32 @@ function trailing24hDelta(rows: ExplorerRow[], code: string): ChartPoint[] {
   return out;
 }
 
-export async function fetchNetworkSeries(): Promise<NetworkSeries> {
-  const t0 = Date.now();
-  const rows = await fetchAllRows();
-  const series: NetworkSeries = {
+/** The fifteen chart series over one ascending row set; `daily` is the
+ *  per-resolution rate function (day-over-day or trailing 24h). */
+function buildSeries(rows: ExplorerRow[], daily: (rows: ExplorerRow[], code: string) => ChartPoint[]): NetworkSeries {
+  return {
     total_txs:            passthrough(rows, 'K'),
-    daily_txs:            deltaSeries(rows, 'K'),
+    daily_txs:            daily(rows, 'K'),
     total_fee_groth:      passthrough(rows, 'F'),
-    daily_fee_groth:      deltaSeries(rows, 'F'),
+    daily_fee_groth:      daily(rows, 'F'),
     total_utxos:          passthrough(rows, 'U'),
     total_contracts:      passthrough(rows, 'B'),
     total_contract_calls: passthrough(rows, 'P'),
-    daily_contract_calls: deltaSeries(rows, 'P'),
+    daily_contract_calls: daily(rows, 'P'),
     total_mw_outputs:     passthrough(rows, 'O'),
-    daily_sh_inputs:      deltaSeries(rows, 'Y'),
+    daily_sh_inputs:      daily(rows, 'Y'),
     total_sh_inputs:      passthrough(rows, 'Y'),
-    daily_sh_outputs:     deltaSeries(rows, 'Z'),
+    daily_sh_outputs:     daily(rows, 'Z'),
     total_sh_outputs:     passthrough(rows, 'Z'),
     total_size_bytes:     passthrough(rows, 'C'),
     total_archive_bytes:  passthrough(rows, 'A'),
   };
+}
+
+export async function fetchNetworkSeries(): Promise<NetworkSeries> {
+  const t0 = Date.now();
+  const rows = await fetchAllRows();
+  const series = buildSeries(rows, deltaSeries);
   logger.info({ rows: rows.length, ms: Date.now() - t0 }, 'network series fetched');
   return series;
 }
@@ -211,23 +217,7 @@ export async function fetchNetworkSeriesHourly(): Promise<NetworkSeries> {
   const t0 = Date.now();
   const { rows } = await fetchPage(undefined, HOURLY_DH, HOURLY_ROWS);
   rows.sort((a, b) => a.height - b.height);
-  const series: NetworkSeries = {
-    total_txs:            passthrough(rows, 'K'),
-    daily_txs:            trailing24hDelta(rows, 'K'),
-    total_fee_groth:      passthrough(rows, 'F'),
-    daily_fee_groth:      trailing24hDelta(rows, 'F'),
-    total_utxos:          passthrough(rows, 'U'),
-    total_contracts:      passthrough(rows, 'B'),
-    total_contract_calls: passthrough(rows, 'P'),
-    daily_contract_calls: trailing24hDelta(rows, 'P'),
-    total_mw_outputs:     passthrough(rows, 'O'),
-    daily_sh_inputs:      trailing24hDelta(rows, 'Y'),
-    total_sh_inputs:      passthrough(rows, 'Y'),
-    daily_sh_outputs:     trailing24hDelta(rows, 'Z'),
-    total_sh_outputs:     passthrough(rows, 'Z'),
-    total_size_bytes:     passthrough(rows, 'C'),
-    total_archive_bytes:  passthrough(rows, 'A'),
-  };
+  const series = buildSeries(rows, trailing24hDelta);
   logger.info({ rows: rows.length, ms: Date.now() - t0 }, 'hourly network series fetched');
   return series;
 }

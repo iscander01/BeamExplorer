@@ -46,12 +46,19 @@ export async function sampleAtHeight(height: number): Promise<BlockMetricsSample
   };
 }
 
-export async function upsertSample(s: BlockMetricsSample): Promise<void> {
+export async function upsertSamples(samples: ReadonlyArray<BlockMetricsSample>): Promise<void> {
+  if (samples.length === 0) return;
   await q(
     `INSERT INTO block_metrics (height, block_ts, chainwork, kernels, difficulty)
-     VALUES ($1, $2, $3, $4, $5)
+     SELECT * FROM unnest($1::bigint[], $2::timestamptz[], $3::numeric[], $4::int[], $5::double precision[])
      ON CONFLICT (height, block_ts) DO NOTHING`,
-    [s.height, s.block_ts, s.chainwork.toString(), s.kernels, s.difficulty],
+    [
+      samples.map((s) => s.height),
+      samples.map((s) => s.block_ts),
+      samples.map((s) => s.chainwork.toString()),
+      samples.map((s) => s.kernels),
+      samples.map((s) => s.difficulty),
+    ],
   );
 }
 
@@ -98,20 +105,19 @@ export async function ingestRange(
       return null;
     })));
 
-    // `samples` is in `batch` (ascending height) order; write until the
-    // first gap.
-    for (let i = 0; i < samples.length; i++) {
-      const s = samples[i];
-      if (!s) {
-        logger.warn(
-          { height: batch[i], from: fromHeight, to: toHeight, last_height: lastHeight },
-          'block_metrics ingest stalled at unavailable height; retrying from it next pass',
-        );
-        return { inserted, lastHeight };
-      }
-      await upsertSample(s);
-      inserted++;
-      lastHeight = s.height;
+    // `samples` is in `batch` (ascending height) order; write the contiguous
+    // prefix before the first gap as one statement, then stop at the gap.
+    const gap = samples.findIndex((s) => s === null);
+    const ok = (gap === -1 ? samples : samples.slice(0, gap)) as BlockMetricsSample[];
+    await upsertSamples(ok);
+    inserted += ok.length;
+    if (ok.length > 0) lastHeight = ok[ok.length - 1]!.height;
+    if (gap !== -1) {
+      logger.warn(
+        { height: batch[gap], from: fromHeight, to: toHeight, last_height: lastHeight },
+        'block_metrics ingest stalled at unavailable height; retrying from it next pass',
+      );
+      return { inserted, lastHeight };
     }
     opts.onProgress?.(lastHeight);
   }
