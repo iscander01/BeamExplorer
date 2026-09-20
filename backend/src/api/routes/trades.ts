@@ -1,10 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { q } from '../../db.js';
+import { config } from '../../config.js';
 import { BadRequest, NotFound } from '../error.js';
 import { resolvePair, readLastIndexedHeight } from '../repos/pairs.js';
-import { loadUsdTable, readBeamUsd } from '../repos/usd.js';
+import { loadUsdTable, type UsdTable } from '../repos/usd.js';
 import { queryBool } from '../query.js';
+import { KIND_LABEL } from '../pairShape.js';
 
 const Query = z.object({
   kind: z.enum(['Trade', 'lp']).default('Trade'),
@@ -39,6 +41,57 @@ interface TradeRow {
   decimals1: number;
 }
 
+// Columns every trade tape row carries; the global route adds pool identity.
+const TRADE_COLUMNS = `t.trade_id::text, t.height::text, t.block_ts,
+                  t.aid_in::text, t.aid_out::text,
+                  t.amount_in::text, t.amount_out::text,
+                  t.volume_aid1::text, t.volume_aid2::text,
+                  t.price_native::text,
+                  t.confirmed,
+                  p.aid1::text, a1.decimals AS decimals1`;
+
+// Wire shape shared by /pairs/{id}/trades and /trades. The base (aid1) is
+// priced off the shared USD table, so non-BEAM-quoted pools carry USD figures
+// whenever their base is reachable through some BEAM-quoted pool.
+function toTradeJson(r: TradeRow, usd: UsdTable, lastHeight: number) {
+  const aid1 = Number(r.aid1);
+  const aidIn = Number(r.aid_in);
+  const priceNative = r.price_native ? Number(r.price_native) : null;
+  // buy = the base (aid1) was acquired, i.e. the target (aid2) was paid in.
+  // Per the AMM Trade primitive (m_Buy1 = buy aid1), aid_in == aid1 means the
+  // user paid the base → sell.
+  const side: 'buy' | 'sell' = aidIn === aid1 ? 'sell' : 'buy';
+  const volumeAid1Human = r.volume_aid1
+    ? Number(r.volume_aid1) / 10 ** r.decimals1
+    : null;
+  const usdPerBase = usd.perAid.get(aid1) ?? null;
+  const priceUsd =
+    usdPerBase !== null && priceNative !== null && priceNative > 0
+      ? usdPerBase / priceNative
+      : null;
+  const valueUsd =
+    usdPerBase !== null && volumeAid1Human !== null
+      ? +(volumeAid1Human * usdPerBase).toFixed(4)
+      : null;
+  return {
+    trade_id: Number(r.trade_id),
+    timestamp: Math.floor(r.block_ts.getTime() / 1000),
+    height: Number(r.height),
+    aid_in: aidIn,
+    aid_out: Number(r.aid_out),
+    amount_in: r.amount_in,
+    amount_out: r.amount_out,
+    side,
+    price_native: priceNative,
+    price_usd: priceUsd,
+    value_usd: valueUsd,
+    confirmed: r.confirmed,
+    confirmations: r.confirmed
+      ? config.CONFIRMATIONS
+      : Math.max(0, lastHeight - Number(r.height)),
+  };
+}
+
 interface LpRow {
   event_id: string;
   height: string;
@@ -70,16 +123,18 @@ export async function tradesRoutes(app: FastifyInstance): Promise<void> {
     const useOffset = offset !== undefined;
     const beforeTs = before ? new Date(before * 1000) : new Date();
     const confirmedFilter = include_unconfirmed ? '' : 'AND t.confirmed = TRUE';
-    // Keyset cursor: `(block_ts, id) < (ts, id)` when the caller passed both
-    // halves, plain `block_ts < ts` for `before`-only callers.
-    const cursorParams: Array<Date | number> =
-      before !== undefined && before_id !== undefined ? [beforeTs, before_id] : [beforeTs];
-    const cursorWhere = (idCol: string): string => (
-      cursorParams.length === 2
-        ? `(t.block_ts, t.${idCol}) < ($2, $3)`
-        : 't.block_ts < $2'
-    );
-    const cursorLimitParam = `$${2 + cursorParams.length}`;
+    // Pagination fragments after `$1` (the pool ids). Offset mode binds
+    // limit/offset; cursor mode binds the keyset `(block_ts, id) < (ts, id)`
+    // when the caller passed both halves, plain `block_ts < ts` otherwise.
+    const paging = (idCol: string): { where: string; tail: string; params: Array<Date | number> } => {
+      if (useOffset) return { where: '', tail: 'LIMIT $2 OFFSET $3', params: [limit, offset] };
+      const keyset = before !== undefined && before_id !== undefined;
+      return {
+        where: keyset ? `AND (t.block_ts, t.${idCol}) < ($2, $3)` : 'AND t.block_ts < $2',
+        tail: `LIMIT $${keyset ? 4 : 3}`,
+        params: keyset ? [beforeTs, before_id, limit] : [beforeTs, limit],
+      };
+    };
 
     if (kind === 'lp') {
       // ctl_after: LP token supply at the first snapshot taken at/after the
@@ -90,31 +145,20 @@ export async function tradesRoutes(app: FastifyInstance): Promise<void> {
       const ctlAfterCol = `(SELECT s.ctl_supply::text FROM pool_state_snapshots s
                               WHERE s.pool_id = t.pool_id AND s.height >= t.height
                               ORDER BY s.height LIMIT 1) AS ctl_after`;
+      const page = paging('event_id');
       const [{ rows }, total] = await Promise.all([
-        useOffset
-          ? q<LpRow>(
-            `SELECT event_id::text, height::text, block_ts, kind,
-                    amount1::text, amount2::text, amount_ctl::text, confirmed,
-                    ${ctlAfterCol}
-               FROM lp_events t
-              WHERE t.pool_id = ANY($1)
-                ${confirmedFilter}
-              ORDER BY t.block_ts DESC, t.event_id DESC
-              LIMIT $2 OFFSET $3`,
-            [poolIds, limit, offset],
-          )
-          : q<LpRow>(
-            `SELECT event_id::text, height::text, block_ts, kind,
-                    amount1::text, amount2::text, amount_ctl::text, confirmed,
-                    ${ctlAfterCol}
-               FROM lp_events t
-              WHERE t.pool_id = ANY($1)
-                AND ${cursorWhere('event_id')}
-                ${confirmedFilter}
-              ORDER BY t.block_ts DESC, t.event_id DESC
-              LIMIT ${cursorLimitParam}`,
-            [poolIds, ...cursorParams, limit],
-          ),
+        q<LpRow>(
+          `SELECT event_id::text, height::text, block_ts, kind,
+                  amount1::text, amount2::text, amount_ctl::text, confirmed,
+                  ${ctlAfterCol}
+             FROM lp_events t
+            WHERE t.pool_id = ANY($1)
+              ${page.where}
+              ${confirmedFilter}
+            ORDER BY t.block_ts DESC, t.event_id DESC
+            ${page.tail}`,
+          [poolIds, ...page.params],
+        ),
         count ? countRows('lp_events', poolIds, include_unconfirmed) : null,
       ]);
       const trades = rows.map((r) => {
@@ -150,89 +194,26 @@ export async function tradesRoutes(app: FastifyInstance): Promise<void> {
       };
     }
 
-    // lastHeight/beamUsd are only consumed by this (Trade) branch; batch them
-    // and the optional total with the independent rows query instead of
-    // awaiting serially.
-    const [lastHeight, beamUsd, total, { rows }] = await Promise.all([
+    const page = paging('trade_id');
+    const [lastHeight, usd, total, { rows }] = await Promise.all([
       readLastIndexedHeight(),
-      readBeamUsd(),
+      loadUsdTable(),
       count ? countRows('trades', poolIds, include_unconfirmed) : null,
-      useOffset
-        ? q<TradeRow>(
-          `SELECT t.trade_id::text, t.height::text, t.block_ts,
-                  t.aid_in::text, t.aid_out::text,
-                  t.amount_in::text, t.amount_out::text,
-                  t.volume_aid1::text, t.volume_aid2::text,
-                  t.price_native::text,
-                  t.confirmed,
-                  p.aid1::text, a1.decimals AS decimals1
-             FROM trades t
-             JOIN pools p   ON p.pool_id = t.pool_id
-             JOIN assets a1 ON a1.aid    = p.aid1
-            WHERE t.pool_id = ANY($1)
-              ${confirmedFilter}
-            ORDER BY t.block_ts DESC, t.trade_id DESC
-            LIMIT $2 OFFSET $3`,
-          [poolIds, limit, offset],
-        )
-        : q<TradeRow>(
-          `SELECT t.trade_id::text, t.height::text, t.block_ts,
-                  t.aid_in::text, t.aid_out::text,
-                  t.amount_in::text, t.amount_out::text,
-                  t.volume_aid1::text, t.volume_aid2::text,
-                  t.price_native::text,
-                  t.confirmed,
-                  p.aid1::text, a1.decimals AS decimals1
-             FROM trades t
-             JOIN pools p   ON p.pool_id = t.pool_id
-             JOIN assets a1 ON a1.aid    = p.aid1
-            WHERE t.pool_id = ANY($1)
-              AND ${cursorWhere('trade_id')}
-              ${confirmedFilter}
-            ORDER BY t.block_ts DESC, t.trade_id DESC
-            LIMIT ${cursorLimitParam}`,
-          [poolIds, ...cursorParams, limit],
-        ),
+      q<TradeRow>(
+        `SELECT ${TRADE_COLUMNS}
+           FROM trades t
+           JOIN pools p   ON p.pool_id = t.pool_id
+           JOIN assets a1 ON a1.aid    = p.aid1
+          WHERE t.pool_id = ANY($1)
+            ${page.where}
+            ${confirmedFilter}
+          ORDER BY t.block_ts DESC, t.trade_id DESC
+          ${page.tail}`,
+        [poolIds, ...page.params],
+      ),
     ]);
 
-    const trades = rows.map((r) => {
-      const aid1 = Number(r.aid1);
-      const aidIn = Number(r.aid_in);
-      const priceNative = r.price_native ? Number(r.price_native) : null;
-      // buy = the base (aid1) was acquired, i.e. the target (aid2) was paid in.
-      // Per the AMM Trade primitive (m_Buy1 = buy aid1), aid_in == aid1 means the
-      // user paid the base → sell.
-      const side: 'buy' | 'sell' = aidIn === aid1 ? 'sell' : 'buy';
-      const volumeAid1Human = r.volume_aid1
-        ? Number(r.volume_aid1) / 10 ** r.decimals1
-        : null;
-      const priceUsd =
-        beamUsd !== null && priceNative !== null && aid1 === 0
-          ? priceNative > 0
-            ? beamUsd / priceNative
-            : null
-          : null;
-      const valueUsd =
-        beamUsd !== null && volumeAid1Human !== null && aid1 === 0
-          ? +(volumeAid1Human * beamUsd).toFixed(4)
-          : null;
-
-      return {
-        trade_id: Number(r.trade_id),
-        timestamp: Math.floor(r.block_ts.getTime() / 1000),
-        height: Number(r.height),
-        aid_in: aidIn,
-        aid_out: Number(r.aid_out),
-        amount_in: r.amount_in,
-        amount_out: r.amount_out,
-        side,
-        price_native: priceNative,
-        price_usd: priceUsd,
-        value_usd: valueUsd,
-        confirmed: r.confirmed,
-        confirmations: r.confirmed ? 80 : Math.max(0, lastHeight - Number(r.height)),
-      };
-    });
+    const trades = rows.map((r) => toTradeJson(r, usd, lastHeight));
 
     void reply.header('cache-control', 'public, max-age=15');
     return {
@@ -269,8 +250,6 @@ async function countRows(
 // pagination (`before`): with no pool filter there is no stable offset to page
 // against while the indexer keeps writing to the head of the feed.
 // ---------------------------------------------------------------------------
-
-const GLOBAL_KIND_LABEL: Record<number, string> = { 0: 'Low', 1: 'Medium', 2: 'High' };
 
 const GlobalQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
@@ -326,14 +305,8 @@ export async function globalTradesRoutes(app: FastifyInstance): Promise<void> {
       readLastIndexedHeight(),
       loadUsdTable(),
       q<GlobalTradeRow>(
-        `SELECT t.trade_id::text, t.height::text, t.block_ts,
-                t.aid_in::text, t.aid_out::text,
-                t.amount_in::text, t.amount_out::text,
-                t.volume_aid1::text, t.volume_aid2::text,
-                t.price_native::text,
-                t.confirmed,
-                p.pool_id::text, p.aid1::text, p.aid2::text, p.kind,
-                a1.decimals AS decimals1,
+        `SELECT ${TRADE_COLUMNS},
+                p.pool_id::text, p.aid2::text, p.kind,
                 a1.short_name AS symbol1, a2.short_name AS symbol2
            FROM trades t
            JOIN pools p   ON p.pool_id = t.pool_id
@@ -347,49 +320,18 @@ export async function globalTradesRoutes(app: FastifyInstance): Promise<void> {
     ]);
 
     const trades = rows.map((r) => {
-      const aid1 = Number(r.aid1);
-      const aidIn = Number(r.aid_in);
-      const priceNative = r.price_native ? Number(r.price_native) : null;
-      // See the per-pair handler: aid_in == aid1 means the base was paid in.
-      const side: 'buy' | 'sell' = aidIn === aid1 ? 'sell' : 'buy';
-      const volumeAid1Human = r.volume_aid1
-        ? Number(r.volume_aid1) / 10 ** r.decimals1
-        : null;
-      // Unlike the per-pair route (BEAM-base only), price the base off the
-      // shared USD table so non-BEAM-quoted pools carry USD figures too. For a
-      // BEAM base the rate is beam_usd, so the two agree by construction.
-      const usdPerBase = usd.perAid.get(aid1) ?? null;
-      const priceUsd =
-        usdPerBase !== null && priceNative !== null && priceNative > 0
-          ? usdPerBase / priceNative
-          : null;
-      const valueUsd =
-        usdPerBase !== null && volumeAid1Human !== null
-          ? +(volumeAid1Human * usdPerBase).toFixed(4)
-          : null;
-
+      const { trade_id, ...rest } = toTradeJson(r, usd, lastHeight);
       return {
-        trade_id: Number(r.trade_id),
+        trade_id,
         pool_id: Number(r.pool_id),
         pair_id: Number(r.pool_id),
-        aid1,
+        aid1: Number(r.aid1),
         aid2: Number(r.aid2),
         symbol1: r.symbol1,
         symbol2: r.symbol2,
         kind: r.kind,
-        kind_label: GLOBAL_KIND_LABEL[r.kind] ?? 'Unknown',
-        timestamp: Math.floor(r.block_ts.getTime() / 1000),
-        height: Number(r.height),
-        aid_in: aidIn,
-        aid_out: Number(r.aid_out),
-        amount_in: r.amount_in,
-        amount_out: r.amount_out,
-        side,
-        price_native: priceNative,
-        price_usd: priceUsd,
-        value_usd: valueUsd,
-        confirmed: r.confirmed,
-        confirmations: r.confirmed ? 80 : Math.max(0, lastHeight - Number(r.height)),
+        kind_label: KIND_LABEL[r.kind] ?? 'Unknown',
+        ...rest,
       };
     });
 

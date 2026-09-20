@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { listPairs, resolvePairId } from '../repos/pairs.js';
 import { loadUsdTable } from '../repos/usd.js';
 import { loadSparklines7d } from '../repos/sparklines.js';
+import { toResponse } from '../pairShape.js';
 import { q } from '../../db.js';
 import { readDexStats } from '../../services/dexStats.js';
 
@@ -96,37 +97,12 @@ async function renderPairCard(poolId: number): Promise<string> {
   if (!row) return renderShell(`<text x="60" y="320" fill="#fff" font-size="48">Pair not found</text>`);
 
   const [usd, sparkMap] = await Promise.all([loadUsdTable(), loadSparklines7d([poolId])]);
-  const aid1 = Number(row.aid1);
-  const aid2 = Number(row.aid2);
-  const sym1 = row.symbol1 ?? `aid${aid1}`;
-  const sym2 = row.symbol2 ?? `aid${aid2}`;
-  const decimals1 = row.decimals1;
-  const decimals2 = row.decimals2;
-  const r1 = row.reserve1 ? Number(row.reserve1) / 10 ** decimals1 : null;
-  const r2 = row.reserve2 ? Number(row.reserve2) / 10 ** decimals2 : null;
-  const lastPriceNative = row.last_price_native ? Number(row.last_price_native) : null;
-  const priceNative = lastPriceNative ?? (r1 !== null && r2 !== null && r1 > 0 ? r2 / r1 : null);
-  const usdPerAid1 = usd.perAid.get(aid1) ?? null;
-  const usdPerAid2 = usd.perAid.get(aid2) ?? null;
-  const priceUsd = usdPerAid2 ?? (
-    priceNative !== null && usdPerAid1 !== null && priceNative > 0
-      ? usdPerAid1 / priceNative
-      : null
-  );
-  const r1Usd = r1 !== null && usdPerAid1 !== null ? r1 * usdPerAid1 : null;
-  const r2Usd = r2 !== null && usdPerAid2 !== null ? r2 * usdPerAid2 : null;
-  const tvlUsd = r1Usd !== null && r2Usd !== null ? r1Usd + r2Usd : null;
-  const volumeAid1Human = row.volume_24h_aid1
-    ? Number(row.volume_24h_aid1) / 10 ** decimals1
-    : 0;
-  const volumeUsd = usdPerAid1 !== null ? volumeAid1Human * usdPerAid1 : null;
-  let priceChange24h: number | null = null;
-  if (lastPriceNative !== null && row.price_24h_ago) {
-    const prev = Number(row.price_24h_ago);
-    if (prev > 0) priceChange24h = ((lastPriceNative - prev) / prev) * 100;
-  }
-  const chg = fmtPct(priceChange24h);
-  const kindLabel = ['Low (0.05%)', 'Medium (0.30%)', 'High (1.00%)'][row.kind] ?? '';
+  // Same valuation as /api/pairs, so the card never disagrees with the page.
+  const p = toResponse(row, usd);
+  const sym1 = p.symbol1 ?? `aid${p.aid1}`;
+  const sym2 = p.symbol2 ?? `aid${p.aid2}`;
+  const chg = fmtPct(p.price_change_24h);
+  const kindLabel = ['Low (0.05%)', 'Medium (0.30%)', 'High (1.00%)'][p.kind] ?? '';
 
   // Sparkline data: backend stores raw aid2-per-aid1 closes. The pair page
   // inverts these for display — do the same so the OG mirrors the UI.
@@ -146,13 +122,13 @@ async function renderPairCard(poolId: number): Promise<string> {
     `  <text x="60" y="160" fill="#fff" font-weight="700" font-size="64">${esc(sym1)}/${esc(sym2)}</text>`,
     `  <text x="60" y="200" fill="rgba(255,255,255,0.5)" font-size="20">Tier · ${esc(kindLabel)}</text>`,
     // Big price
-    `  <text x="60" y="290" fill="#fff" font-weight="700" font-size="56">${esc(fmt$(priceUsd))}</text>`,
+    `  <text x="60" y="290" fill="#fff" font-weight="700" font-size="56">${esc(fmt$(p.price_usd))}</text>`,
     `  <text x="60" y="330" fill="${chg.color}" font-size="26" font-weight="600">${esc(chg.text)} 24h</text>`,
     // Right-side mini KPIs
     `  <text x="${OG_WIDTH - 60}" y="200" text-anchor="end" fill="rgba(255,255,255,0.5)" font-size="18">LIQUIDITY</text>`,
-    `  <text x="${OG_WIDTH - 60}" y="232" text-anchor="end" fill="#fff" font-size="32" font-weight="600">${esc(fmt$(tvlUsd))}</text>`,
+    `  <text x="${OG_WIDTH - 60}" y="232" text-anchor="end" fill="#fff" font-size="32" font-weight="600">${esc(fmt$(p.tvl_usd))}</text>`,
     `  <text x="${OG_WIDTH - 60}" y="290" text-anchor="end" fill="rgba(255,255,255,0.5)" font-size="18">VOLUME 24H</text>`,
-    `  <text x="${OG_WIDTH - 60}" y="322" text-anchor="end" fill="#fff" font-size="32" font-weight="600">${esc(fmt$(volumeUsd))}</text>`,
+    `  <text x="${OG_WIDTH - 60}" y="322" text-anchor="end" fill="#fff" font-size="32" font-weight="600">${esc(fmt$(p.volume_24h_usd))}</text>`,
     `</g>`,
     // 7d sparkline
     fillPath ? `<path d="${fillPath}" fill="url(#mint)"/>` : '',

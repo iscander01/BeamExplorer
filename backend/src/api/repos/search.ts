@@ -313,22 +313,42 @@ const CHART_CATALOG: ReadonlyArray<{ key: string; title: string }> = [
   { key: 'blackhole', title: 'Black Hole (assets burned)' },
 ];
 
+// Substring match over a static catalog, capped at PER_TYPE_LIMIT. The score
+// ladder is exact title 100, title prefix 80, other hit 60 unless overridden.
+function matchCatalog<T extends { title: string }>(
+  entries: ReadonlyArray<T>,
+  needle: string,
+  opts: {
+    haystack: (e: T) => string;
+    item: (e: T, score: number) => SearchItem;
+    score?: (titleLc: string) => number;
+  },
+): SearchItem[] {
+  const score = opts.score ?? ((t) => (t === needle ? 100 : t.startsWith(needle) ? 80 : 60));
+  return entries
+    .filter((e) => opts.haystack(e).toLowerCase().includes(needle))
+    .slice(0, PER_TYPE_LIMIT)
+    .map((e) => opts.item(e, score(e.title.toLowerCase())));
+}
+
 /** Match the free-text query against network-chart titles (synchronous, no I/O). */
 export function searchCharts(c: Candidates): SearchItem[] {
   if (c.text === null) return [];
   const needle = c.text.toLowerCase();
-  return CHART_CATALOG
-    .filter((ch) => ch.title.toLowerCase().includes(needle))
-    .slice(0, PER_TYPE_LIMIT)
-    .map((ch) => ({
+  return matchCatalog(CHART_CATALOG, needle, {
+    haystack: (ch) => ch.title,
+    // Titles only, no prefix arm: chart names share long common prefixes.
+    score: (t) => (t === needle ? 100 : 70),
+    item: (ch, score) => ({
       type: 'chart' as const,
       id: ch.key,
       title: ch.title,
       subtitle: 'Network chart',
       href: `/explorer/charts?chart=${encodeURIComponent(ch.key)}`,
-      score: ch.title.toLowerCase() === needle ? 100 : 70,
+      score,
       flags: [],
-    }));
+    }),
+  });
 }
 
 // Static catalog of the contracts we hold a CID for. The explorer resolves a
@@ -368,23 +388,20 @@ const CONTRACT_CATALOG: ReadonlyArray<{ title: string; keywords: string; cid: st
 export function searchContracts(c: Candidates): SearchItem[] {
   if (c.text === null) return [];
   const needle = c.text.toLowerCase();
-  return CONTRACT_CATALOG
-    .filter((k): k is { title: string; keywords: string; cid: string } => Boolean(k.cid))
-    .filter((k) => k.title.toLowerCase().includes(needle) || k.keywords.toLowerCase().includes(needle))
-    .slice(0, PER_TYPE_LIMIT)
-    .map((k) => {
-      const titleLc = k.title.toLowerCase();
-      const score = titleLc === needle ? 100 : titleLc.startsWith(needle) ? 80 : 60;
-      return {
-        type: 'contract' as const,
-        id: k.cid,
-        title: k.title,
-        subtitle: `${k.cid.slice(0, 8)}\u2026${k.cid.slice(-6)}`,
-        href: `/explorer/beam?network=mainnet&type=contract&id=${encodeURIComponent(k.cid)}`,
-        score,
-        flags: [],
-      };
-    });
+  const known = CONTRACT_CATALOG
+    .filter((k): k is { title: string; keywords: string; cid: string } => Boolean(k.cid));
+  return matchCatalog(known, needle, {
+    haystack: (k) => `${k.title} ${k.keywords}`,
+    item: (k, score) => ({
+      type: 'contract' as const,
+      id: k.cid,
+      title: k.title,
+      subtitle: `${k.cid.slice(0, 8)}\u2026${k.cid.slice(-6)}`,
+      href: `/explorer/beam?network=mainnet&type=contract&id=${encodeURIComponent(k.cid)}`,
+      score,
+      flags: [],
+    }),
+  });
 }
 
 // Static catalog of navigable app pages.
@@ -410,24 +427,16 @@ const PAGE_CATALOG: ReadonlyArray<{ title: string; keywords: string; href: strin
 export function searchPages(c: Candidates): SearchItem[] {
   if (c.text === null) return [];
   const needle = c.text.toLowerCase();
-  return PAGE_CATALOG
-    .filter((p) => {
-      const titleLc = p.title.toLowerCase();
-      const keywordsLc = p.keywords.toLowerCase();
-      return titleLc.includes(needle) || keywordsLc.includes(needle);
-    })
-    .slice(0, PER_TYPE_LIMIT)
-    .map((p) => {
-      const titleLc = p.title.toLowerCase();
-      const score = titleLc === needle ? 100 : titleLc.startsWith(needle) ? 80 : 60;
-      return {
-        type: 'page' as const,
-        id: p.href,
-        title: p.title,
-        subtitle: 'Page',
-        href: p.href,
-        score,
-        flags: [],
-      };
-    });
+  return matchCatalog(PAGE_CATALOG, needle, {
+    haystack: (p) => `${p.title} ${p.keywords}`,
+    item: (p, score) => ({
+      type: 'page' as const,
+      id: p.href,
+      title: p.title,
+      subtitle: 'Page',
+      href: p.href,
+      score,
+      flags: [],
+    }),
+  });
 }

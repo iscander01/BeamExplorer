@@ -306,8 +306,8 @@ Trade response:
       "amount_out": "29342934",
       "side": "buy",                   // computed: aid_in == aid1 → buy
       "price_native": 29.34293421,
-      "price_usd": 0.99,               // when aid1 == 0 (BEAM)
-      "value_usd": 9.93,               // volume_aid1 (in whole units) × BEAM/USD when aid1 == 0
+      "price_usd": 0.99,               // USD per aid2 unit via the base's USD rate; null without a USD path
+      "value_usd": 9.93,               // volume_aid1 (in whole units) × USD rate of aid1
       "confirmed": true,
       "confirmations": 80              // truncated to 80 once confirmed
     }
@@ -398,12 +398,10 @@ as the `before` param to page further. `null` when the page came back empty.
 `before` alone still works but can drop the remaining trades of the block the
 previous page ended in.
 
-One deliberate difference from the per-pair route: `price_usd` and `value_usd`
-are priced off the shared [USD table](#usd-valuation) rather than only from
-`beam_usd`, so pools that aren't BEAM-quoted still carry USD figures as long as
-their base asset is reachable through some BEAM-quoted pool. For a BEAM-base
-pool the rate *is* `beam_usd`, so the two routes agree there by construction.
-Both stay `null` when the base has no USD path.
+As on the per-pair route, `price_usd` and `value_usd` are priced off the shared
+[USD table](#usd-valuation): pools that aren't BEAM-quoted carry USD figures as
+long as their base asset is reachable through some BEAM-quoted pool. Both stay
+`null` when the base has no USD path.
 
 `Cache-Control: public, max-age=15`.
 

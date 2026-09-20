@@ -42,62 +42,14 @@ let lastAssetsSync = 0;
 const BLOCK_METRICS_PER_TICK = 200;
 let blockMetricsInflight = false;
 
-// How often we recompute the slow /api/stats aggregates (currently just
-// total_volume_usd). The full-trades CTE is too slow to run per-request
-// behind CF Tunnel's ~100s edge timeout. 5 min.
-const DEX_STATS_REFRESH_MS = 5 * 60 * 1000;
-let lastDexStatsRefresh = 0;
-let dexStatsRefreshInflight = false;
-
-// Asset-swap offers (explorer `/asset_swaps`, BeamMW/beam #2054). Independent
-// of the main tick — runs at its own cadence so a slow explorer request can't
-// stall DEX call ingest. No-ops when the explorer build lacks swap support.
-let lastAssetSwapsSync = 0;
-let assetSwapsInflight = false;
-
 // Atomic-swap mirror runs once per tick (cheap, two HTTP calls).
 let atomicSwapsInflight = false;
-
-// DApp Store ingest resyncs at the assets-catalog cadence (10 min). Call
-// volume is tiny — no need to do it every tick.
-const DAPP_STORE_RESYNC_MS = 10 * 60 * 1000;
-let lastDappStoreSync = 0;
-let dappStoreInflight = false;
-
-// IPFS pin sweep. Walks dapps + dapp_versions for rows whose CID we haven't
-// pinned yet on our wallet-api node and pins them. Faster cadence than the
-// dapp-store sync itself (3 min) so a newly-indexed dapp gets pinned within
-// a couple of ticks. The sweep is a no-op once the backlog is drained.
-const IPFS_PIN_RESYNC_MS = 3 * 60 * 1000;
-let lastIpfsPinSync = 0;
-let ipfsPinInflight = false;
-
-// Bridge (Pipe) message reconciliation. Reads the Beam side of all five
-// Beam<->Ethereum bridges through the Pipe app-shader in wallet-api. Volume is
-// tiny — a full sweep of every bridge is ~650 shader calls / ~30s — so 5 min is
-// generous. Fire-and-forget is safe here because bridge_messages is upserted on
-// a natural key and reorg-healed by UPDATE, not DELETE (see reorg.ts); if that
-// ever becomes a DELETE this must move inline, per the note on
-// runDaoVoteProjection below.
-const BRIDGE_RESYNC_MS = 5 * 60 * 1000;
-let lastBridgeSync = 0;
-let bridgeInflight = false;
-
-// Oracle2 state projection. Three read-only calls (two shader invocations plus
-// one explorer fetch for the version label) feeding a single row, so a per-tick
-// cadence would be wasteful — a provider writes at most every few blocks.
-const ORACLE_STATE_RESYNC_MS = 60 * 1000;
-let lastOracleStateSync = 0;
-let oracleStateInflight = false;
 
 // Mining pool stats refresh. Triggered when the chain head advances (pool
 // numbers update once per block, ~1 min on BEAM), inflight-gated and async so a
 // slow/failed pool API never stalls the tick. Bootstrap + 5-min staleness
 // fallback covers startup and a stalled head.
 let miningPoolsInflight = false;
-let lastDaoStatsRefresh = 0;
-let daoStatsRefreshInflight = false;
-const DAO_STATS_REFRESH_MS = 5 * 60_000;
 let lastMiningRefreshHeight = 0;
 let lastMiningRefreshAt = 0;
 const MINING_STALENESS_MS = 5 * 60 * 1000;
@@ -159,21 +111,48 @@ async function indexOracle(headHeight: number): Promise<void> {
 // Kick off a background refresh of the dex_stats cache if stale. Fire-and-forget
 // so a long-running aggregate query doesn't stall the tick loop; the in-flight
 // flag prevents stacking concurrent refreshes when one run outlasts an interval.
-function maybeKickDexStatsRefresh(): void {
-  if (dexStatsRefreshInflight) return;
-  const now = Date.now();
-  if (now - lastDexStatsRefresh < DEX_STATS_REFRESH_MS) return;
-  dexStatsRefreshInflight = true;
-  refreshDexStats()
-    .then(() => { lastDexStatsRefresh = Date.now(); })
-    .catch((err) => {
-      logger.warn(
-        { err: err instanceof Error ? err.message : err },
-        'dex_stats refresh failed; will retry next tick',
-      );
-    })
-    .finally(() => { dexStatsRefreshInflight = false; });
+//
+// Interval-gated, fire-and-forget background job. One run at a time; the
+// interval counts from the last successful completion, so a failing job
+// retries every tick. Only use for work that is reorg-safe when detached
+// (upserts, caches) — anything reorg-DELETEd must run inline in the tick.
+function periodic<A extends unknown[], T>(opts: {
+  name: string;
+  everyMs: number;
+  enabled?: () => boolean;
+  run: (...args: A) => Promise<T>;
+  onDone?: (res: T) => void;
+}): (...args: A) => void {
+  let inflight = false;
+  let lastRun = 0;
+  return (...args: A) => {
+    if (inflight) return;
+    if (opts.enabled && !opts.enabled()) return;
+    if (Date.now() - lastRun < opts.everyMs) return;
+    inflight = true;
+    opts.run(...args)
+      .then((res) => {
+        lastRun = Date.now();
+        opts.onDone?.(res);
+      })
+      .catch((err) => {
+        logger.warn(
+          { err: err instanceof Error ? err.message : err },
+          `${opts.name} failed; will retry next tick`,
+        );
+      })
+      .finally(() => { inflight = false; });
+  };
 }
+
+// How often we recompute the slow /api/stats aggregates (currently just
+// total_volume_usd). The full-trades CTE is too slow to run per-request
+// behind CF Tunnel's ~100s edge timeout. 5 min.
+const maybeKickDexStatsRefresh = periodic({
+  name: 'dex_stats refresh',
+  everyMs: 5 * 60 * 1000,
+  run: refreshDexStats,
+});
 
 // Fire-and-forget catch-up of the block_metrics hypertable. We deliberately
 // don't await this in the tick body — at most BLOCK_METRICS_PER_TICK explorer
@@ -201,26 +180,15 @@ function maybeKickBlockMetricsCatchUp(headHeight: number): void {
     .finally(() => { blockMetricsInflight = false; });
 }
 
-// Fire-and-forget poll of the explorer for asset-swap offers. Independent
-// cadence so DEX ingest never waits on a slow explorer request.
-function maybeKickAssetSwapsSync(): void {
-  if (assetSwapsInflight) return;
-  const now = Date.now();
-  if (now - lastAssetSwapsSync < config.ASSET_SWAP_POLL_MS) return;
-  assetSwapsInflight = true;
-  syncAssetSwapOffers()
-    .then((res) => {
-      lastAssetSwapsSync = Date.now();
-      if (res) logger.debug(res, 'asset swap offers synced');
-    })
-    .catch((err) => {
-      logger.warn(
-        { err: err instanceof Error ? err.message : err },
-        'asset swap offers sync failed; will retry next tick',
-      );
-    })
-    .finally(() => { assetSwapsInflight = false; });
-}
+// Asset-swap offers (explorer `/asset_swaps`, BeamMW/beam #2054). Independent
+// of the main tick — runs at its own cadence so a slow explorer request can't
+// stall DEX call ingest. No-ops when the explorer build lacks swap support.
+const maybeKickAssetSwapsSync = periodic({
+  name: 'asset swap offers sync',
+  everyMs: config.ASSET_SWAP_POLL_MS,
+  run: syncAssetSwapOffers,
+  onDone: (res) => { if (res) logger.debug(res, 'asset swap offers synced'); },
+});
 
 // Atomic-swap offers + totals (explorer-driven). Cheap and synchronous-ish; we
 // still gate to avoid stacking when an explorer request hangs.
@@ -241,71 +209,44 @@ function maybeKickAtomicSwapsSync(headHeight: number): void {
 }
 
 // DApp Store registry ingest. Runs the local app-shader (`dapps_store_app.wasm`)
-// against the live contract via wallet-api `invoke_contract`. No headHeight
-// argument: the shader reads chain state at the wallet's tip.
-function maybeKickDappStoreSync(): void {
-  if (dappStoreInflight) return;
-  if (!config.DAPP_STORE_CID) return;
-  if (!config.WALLET_API_URL) return; // wasm execution needs the daemon
-  const now = Date.now();
-  if (now - lastDappStoreSync < DAPP_STORE_RESYNC_MS) return;
-  dappStoreInflight = true;
-  syncDappStore()
-    .then((res) => {
-      lastDappStoreSync = Date.now();
-      if (res) logger.info(res, 'dapp-store synced');
-    })
-    .catch((err) => {
-      logger.warn(
-        { err: err instanceof Error ? err.message : err },
-        'dapp-store sync failed; will retry next tick',
-      );
-    })
-    .finally(() => { dappStoreInflight = false; });
-}
+// against the live contract via wallet-api `invoke_contract`, so it needs the
+// daemon. No headHeight argument: the shader reads chain state at the wallet's
+// tip. Resyncs at the assets-catalog cadence (10 min); call volume is tiny.
+const maybeKickDappStoreSync = periodic({
+  name: 'dapp-store sync',
+  everyMs: 10 * 60 * 1000,
+  enabled: () => Boolean(config.DAPP_STORE_CID && config.WALLET_API_URL),
+  run: syncDappStore,
+  onDone: (res) => { if (res) logger.info(res, 'dapp-store synced'); },
+});
 
 // Oracle2 provider/median state, read through `oracle2_app.wasm` in wallet-api.
 // The explorer can't decode the stored Median record, so this is the only
-// source for the height the current median stays valid through.
-function maybeKickOracleStateSync(headHeight: number): void {
-  if (oracleStateInflight) return;
-  if (!config.WALLET_API_URL) return; // wasm execution needs the daemon
-  const now = Date.now();
-  if (now - lastOracleStateSync < ORACLE_STATE_RESYNC_MS) return;
-  oracleStateInflight = true;
-  syncOracleState(headHeight)
-    .then((res) => {
-      lastOracleStateSync = Date.now();
-      logger.debug(res, 'oracle state synced');
-    })
-    .catch((err) => {
-      logger.warn(
-        { err: err instanceof Error ? err.message : err },
-        'oracle state sync failed; will retry next tick',
-      );
-    })
-    .finally(() => { oracleStateInflight = false; });
-}
+// source for the height the current median stays valid through. Three
+// read-only calls feeding a single row, so a per-tick cadence would be
+// wasteful — a provider writes at most every few blocks.
+const maybeKickOracleStateSync = periodic({
+  name: 'oracle state sync',
+  everyMs: 60 * 1000,
+  enabled: () => Boolean(config.WALLET_API_URL),
+  run: (headHeight: number) => syncOracleState(headHeight),
+  onDone: (res) => { logger.debug(res, 'oracle state synced'); },
+});
 
-function maybeKickBridgeSync(): void {
-  if (bridgeInflight) return;
-  if (!config.WALLET_API_URL) return; // wasm execution needs the daemon
-  const now = Date.now();
-  if (now - lastBridgeSync < BRIDGE_RESYNC_MS) return;
-  bridgeInflight = true;
-  syncBridges()
-    .then((res) => {
-      lastBridgeSync = Date.now();
-      logger.info(res, 'bridges synced');
-    })
-    .catch((err) => {
-      logger.warn(
-        { err: err instanceof Error ? err.message : err },
-        'bridge sync failed; will retry next tick',
-      );
-    })
-    .finally(() => { bridgeInflight = false; });
-}
+// Bridge (Pipe) message reconciliation. Reads the Beam side of all five
+// Beam<->Ethereum bridges through the Pipe app-shader in wallet-api. Volume is
+// tiny — a full sweep of every bridge is ~650 shader calls / ~30s — so 5 min is
+// generous. Fire-and-forget is safe here because bridge_messages is upserted on
+// a natural key and reorg-healed by UPDATE, not DELETE (see reorg.ts); if that
+// ever becomes a DELETE this must move inline, per the note on
+// runDaoVoteProjection below.
+const maybeKickBridgeSync = periodic({
+  name: 'bridge sync',
+  everyMs: 5 * 60 * 1000,
+  enabled: () => Boolean(config.WALLET_API_URL),
+  run: syncBridges,
+  onDone: (res) => { logger.info(res, 'bridges synced'); },
+});
 
 function maybeKickMiningPoolsRefresh(headHeight: number): void {
   if (miningPoolsInflight) return;
@@ -329,25 +270,18 @@ function maybeKickMiningPoolsRefresh(headHeight: number): void {
     .finally(() => { miningPoolsInflight = false; });
 }
 
-function maybeKickIpfsPinSync(): void {
-  if (ipfsPinInflight) return;
-  if (!config.WALLET_API_URL) return; // pin RPC needs the daemon
-  const now = Date.now();
-  if (now - lastIpfsPinSync < IPFS_PIN_RESYNC_MS) return;
-  ipfsPinInflight = true;
-  syncIpfsPins()
-    .then((res) => {
-      lastIpfsPinSync = Date.now();
-      if (res) logger.info(res, 'ipfs-pin batch');
-    })
-    .catch((err) => {
-      logger.warn(
-        { err: err instanceof Error ? err.message : err },
-        'ipfs-pin sync failed; will retry next tick',
-      );
-    })
-    .finally(() => { ipfsPinInflight = false; });
-}
+// IPFS pin sweep. Walks dapps + dapp_versions for rows whose CID we haven't
+// pinned yet on our wallet-api node and pins them (the pin RPC needs the
+// daemon). Faster cadence than the dapp-store sync itself (3 min) so a
+// newly-indexed dapp gets pinned within a couple of ticks. The sweep is a
+// no-op once the backlog is drained.
+const maybeKickIpfsPinSync = periodic({
+  name: 'ipfs-pin sync',
+  everyMs: 3 * 60 * 1000,
+  enabled: () => Boolean(config.WALLET_API_URL),
+  run: syncIpfsPins,
+  onDone: (res) => { if (res) logger.info(res, 'ipfs-pin batch'); },
+});
 
 // DaoVote governance projection: snapshot decoded state (tallies/turnout), map
 // AddProposal calls to proposal text, and ingest individual votes. Awaited
@@ -369,18 +303,12 @@ async function runDaoVoteProjection(): Promise<void> {
 
 // Recompute the cached DAO treasury/revenue aggregates every few minutes so the
 // API serves them instantly instead of re-scanning ~130k vault calls per request.
-function maybeKickDaoStatsRefresh(): void {
-  if (daoStatsRefreshInflight) return;
-  if (!config.DAO_VAULT_CID) return;
-  if (Date.now() - lastDaoStatsRefresh < DAO_STATS_REFRESH_MS) return;
-  daoStatsRefreshInflight = true;
-  refreshDaoStats()
-    .then(() => { lastDaoStatsRefresh = Date.now(); })
-    .catch((err) => {
-      logger.warn({ err: err instanceof Error ? err.message : err }, 'dao_stats refresh failed; will retry next tick');
-    })
-    .finally(() => { daoStatsRefreshInflight = false; });
-}
+const maybeKickDaoStatsRefresh = periodic({
+  name: 'dao_stats refresh',
+  everyMs: 5 * 60_000,
+  enabled: () => Boolean(config.DAO_VAULT_CID),
+  run: refreshDaoStats,
+});
 
 async function maybeSyncAssetsCatalog(): Promise<void> {
   const now = Date.now();
