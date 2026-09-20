@@ -1,7 +1,7 @@
 import { config } from '../../config.js';
 import { q } from '../../db.js';
 import { getContract } from '../../explorer.js';
-import { getLatestUsdPrices, valueUsd } from '../../services/pricing.js';
+import { getLatestUsdPrices, valueUsd } from './usd.js';
 import { readDaoStat, writeDaoStat } from './daoStatsCache.js';
 
 // DaoVault treasury. Balances come from the vault's Locked Funds state (the

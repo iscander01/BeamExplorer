@@ -1,12 +1,10 @@
 import { q } from '../db.js';
 import { logger } from '../logger.js';
+import { crossRateCtes, pricedSelect } from './crossRate.js';
 
 // All-time cumulative trade volume, point-in-time valued. Daily-bucketed
 // with materialized JOINs — same methodology as /charts/dex-volume, so the
 // header total in /api/stats agrees with the cumulative chart on the page.
-//
-// Per asset and per day, the cross-rate uses the BEAM-paired pool with the
-// largest BEAM reserve (less manipulable than "freshest snapshot wins").
 //
 // Incremental: closed days are immutable (the 80-block confirmation window
 // and any realistic reorg both sit well inside the trailing recompute
@@ -15,36 +13,10 @@ import { logger } from '../logger.js';
 // full trades/pool_state_snapshots/oracle_snapshots hypertables every 5 min.
 const RECOMPUTE_DAILY_SQL = `
   INSERT INTO dex_stats_daily (day, volume_usd, trades)
-  WITH oracle_day AS (
-    SELECT time_bucket(INTERVAL '1 day', ts) AS day,
-           last(beam_usd, ts) AS beam_usd
-      FROM oracle_snapshots
-     WHERE ts >= $1
-     GROUP BY day
-  ),
-  pool_day AS (
-    SELECT pool_id,
-           time_bucket(INTERVAL '1 day', ts) AS day,
-           last(reserve1, ts)::numeric AS reserve1,
-           last(reserve2, ts)::numeric AS reserve2
-      FROM pool_state_snapshots
-     WHERE ts >= $1
-     GROUP BY pool_id, time_bucket(INTERVAL '1 day', ts)
-  ),
-  beam_paired AS (
-    SELECT DISTINCT ON (pd.day, p.aid2)
-           pd.day,
-           p.aid2 AS asset_aid,
-           pd.reserve1::numeric AS beam_reserve,
-           pd.reserve2::numeric AS asset_reserve
-      FROM pool_day pd
-      JOIN pools p ON p.pool_id = pd.pool_id
-     WHERE p.aid1 = 0 AND pd.reserve1 > 0 AND pd.reserve2 > 0
-     ORDER BY pd.day, p.aid2, pd.reserve1 DESC
-  ),
-  trade_daily AS (
+  WITH ${crossRateCtes("INTERVAL '1 day'", { sinceParam: 1 }, 'pool_state_snapshots')},
+  trade_b AS (
     SELECT t.pool_id,
-           time_bucket(INTERVAL '1 day', t.block_ts) AS day,
+           time_bucket(INTERVAL '1 day', t.block_ts) AS b,
            SUM(t.volume_aid1)::numeric AS vol1,
            SUM(t.volume_aid2)::numeric AS vol2,
            count(*) AS trades
@@ -53,36 +25,13 @@ const RECOMPUTE_DAILY_SQL = `
      GROUP BY t.pool_id, time_bucket(INTERVAL '1 day', t.block_ts)
   ),
   priced AS (
-    SELECT
-      td.day,
-      td.trades,
-      CASE
-        WHEN p.aid1 = 0 AND od.beam_usd IS NOT NULL THEN
-          (td.vol1 / 1e8::numeric) * od.beam_usd
-        WHEN bp1.beam_reserve IS NOT NULL AND od.beam_usd IS NOT NULL THEN
-          (td.vol1 / power(10::numeric, a1.decimals))
-           * (bp1.beam_reserve / 1e8::numeric)
-           / NULLIF(bp1.asset_reserve / power(10::numeric, a1.decimals), 0)
-           * od.beam_usd
-        WHEN bp2.beam_reserve IS NOT NULL AND od.beam_usd IS NOT NULL THEN
-          (td.vol2 / power(10::numeric, a2.decimals))
-           * (bp2.beam_reserve / 1e8::numeric)
-           / NULLIF(bp2.asset_reserve / power(10::numeric, a2.decimals), 0)
-           * od.beam_usd
-      END AS usd_value
-      FROM trade_daily td
-      JOIN pools  p  ON p.pool_id = td.pool_id
-      JOIN assets a1 ON a1.aid = p.aid1
-      JOIN assets a2 ON a2.aid = p.aid2
-      LEFT JOIN oracle_day  od  ON od.day  = td.day
-      LEFT JOIN beam_paired bp1 ON bp1.day = td.day AND bp1.asset_aid = p.aid1
-      LEFT JOIN beam_paired bp2 ON bp2.day = td.day AND bp2.asset_aid = p.aid2
+    ${pricedSelect({ from: 'trade_b', cols: ['vol1', 'vol2'], as: 'usd_value', select: 's.trades,' })}
   )
-  SELECT day,
+  SELECT b,
          SUM(usd_value) AS volume_usd,
          SUM(trades)    AS trades
     FROM priced
-   GROUP BY day
+   GROUP BY b
 `;
 
 // SUM skips NULLs, so per-day volume_usd is NULL exactly when no trade that

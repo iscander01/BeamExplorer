@@ -6,6 +6,7 @@ import { q } from '../../db.js';
 import { fetchNetworkRangeByHeight, resToDh, type ExplorerRow } from '../../services/networkStats.js';
 import { bridgeTransfers, bridgeTransfersTotal, bridgeFees, bridgeFeesTotal } from '../repos/bridgeSeries.js';
 import { bridgeTvlSeries, bridgeTvlByAsset, type Bucket as BridgeBucket } from '../../services/bridgeTvl.js';
+import { crossRateCtes, pricedSelect, tvlSql } from '../../services/crossRate.js';
 
 export type Res = '1m' | '1h' | '1d' | '1M';
 
@@ -213,61 +214,6 @@ export function buildSimpleLevelSql(name: SimpleLevelChart, res: TiledRes, windo
   }
 }
 
-function tvlRangeSql(res: TiledRes, fromSec: number, toSec: number): string {
-  const B = PG_INTERVAL[res];
-  // Same cross-rate pricing as TVL_HOURLY_SQL, bucketed at $B over [from,to).
-  // Raw pool_state_snapshots scan (candles carry no reserves) — bounded window
-  // keeps it cheap; a pool_state cagg is a noted follow-up if 1m TVL gets hot.
-  return `
-    WITH oracle_b AS (
-      SELECT time_bucket(${B}, ts) AS b, last(beam_usd, ts) AS beam_usd
-        FROM oracle_snapshots
-       WHERE ts >= to_timestamp(${fromSec}) AND ts < to_timestamp(${toSec})
-       GROUP BY 1
-    ),
-    pool_b AS (
-      SELECT pool_id, time_bucket(${B}, ts) AS b,
-             last(reserve1, ts)::numeric AS reserve1, last(reserve2, ts)::numeric AS reserve2
-        FROM pool_state_snapshots
-       WHERE ts >= to_timestamp(${fromSec}) AND ts < to_timestamp(${toSec})
-       GROUP BY pool_id, time_bucket(${B}, ts)
-    ),
-    beam_paired AS (
-      SELECT DISTINCT ON (pb.b, p.aid2)
-             pb.b, p.aid2 AS asset_aid,
-             pb.reserve1::numeric AS beam_reserve, pb.reserve2::numeric AS asset_reserve
-        FROM pool_b pb JOIN pools p ON p.pool_id = pb.pool_id
-       WHERE p.aid1 = 0 AND pb.reserve1 > 0 AND pb.reserve2 > 0
-       ORDER BY pb.b, p.aid2, pb.reserve1 DESC
-    ),
-    priced AS (
-      SELECT pb.b,
-             CASE
-               WHEN p.aid1 = 0 AND od.beam_usd IS NOT NULL THEN
-                 2 * (pb.reserve1 / 1e8::numeric) * od.beam_usd
-               WHEN bp1.beam_reserve IS NOT NULL AND od.beam_usd IS NOT NULL THEN
-                 2 * (pb.reserve1 / power(10::numeric, a1.decimals))
-                   * (bp1.beam_reserve / 1e8::numeric)
-                   / NULLIF(bp1.asset_reserve / power(10::numeric, a1.decimals), 0) * od.beam_usd
-               WHEN bp2.beam_reserve IS NOT NULL AND od.beam_usd IS NOT NULL THEN
-                 2 * (pb.reserve2 / power(10::numeric, a2.decimals))
-                   * (bp2.beam_reserve / 1e8::numeric)
-                   / NULLIF(bp2.asset_reserve / power(10::numeric, a2.decimals), 0) * od.beam_usd
-             END AS tvl_usd
-        FROM pool_b pb
-        JOIN pools  p  ON p.pool_id = pb.pool_id
-        JOIN assets a1 ON a1.aid = p.aid1
-        JOIN assets a2 ON a2.aid = p.aid2
-        LEFT JOIN oracle_b    od  ON od.b  = pb.b
-        LEFT JOIN beam_paired bp1 ON bp1.b = pb.b AND bp1.asset_aid = p.aid1
-        LEFT JOIN beam_paired bp2 ON bp2.b = pb.b AND bp2.asset_aid = p.aid2
-       WHERE pb.reserve1 > 0 OR pb.reserve2 > 0
-    )
-    SELECT EXTRACT(epoch FROM b)::bigint AS ts, SUM(tvl_usd)::float8 AS value
-      FROM priced WHERE tvl_usd IS NOT NULL GROUP BY b ORDER BY 1
-  `;
-}
-
 function assetsRangeSql(res: TiledRes, fromSec: number, toSec: number): string {
   const B = PG_INTERVAL[res];
   // Cumulative confidential-asset count, seeded with the pre-window baseline.
@@ -292,7 +238,9 @@ export function buildLevelRangeSql(name: string, res: TiledRes, fromSec: number,
   switch (name) {
     case 'price': case 'hashrate': case 'difficulty': case 'block-time':
       return buildSimpleLevelSql(name, res, { from: fromSec, to: toSec });
-    case 'tvl':    return tvlRangeSql(res, fromSec, toSec);
+    // Raw pool_state_snapshots scan (candles carry no reserves, liquidity_1h
+    // can't serve sub-hour buckets) — the bounded window keeps it cheap.
+    case 'tvl':    return tvlSql(PG_INTERVAL[res], { from: fromSec, to: toSec }, 'pool_state_snapshots');
     case 'assets': return assetsRangeSql(res, fromSec, toSec);
     default: throw new Error(`buildLevelRangeSql: not a level chart: ${name}`);
   }
@@ -338,27 +286,7 @@ export function buildRateRangeSql(name: 'coinbase' | 'dex-volume', res: TiledRes
 
   // dex-volume: per-bucket USD volume from candles_<res> + cross-rate, then trailing-24h.
   return `
-    WITH oracle_b AS (
-      SELECT time_bucket(${B}, ts) AS b, last(beam_usd, ts) AS beam_usd
-        FROM oracle_snapshots
-       WHERE ts >= to_timestamp(${lookbackFrom}) AND ts < to_timestamp(${toSec})
-       GROUP BY 1
-    ),
-    pool_b AS (
-      SELECT pool_id, time_bucket(${B}, ts) AS b,
-             last(reserve1, ts)::numeric AS reserve1, last(reserve2, ts)::numeric AS reserve2
-        FROM pool_state_snapshots
-       WHERE ts >= to_timestamp(${lookbackFrom}) AND ts < to_timestamp(${toSec})
-       GROUP BY pool_id, time_bucket(${B}, ts)
-    ),
-    beam_paired AS (
-      SELECT DISTINCT ON (pb.b, p.aid2)
-             pb.b, p.aid2 AS asset_aid,
-             pb.reserve1::numeric AS beam_reserve, pb.reserve2::numeric AS asset_reserve
-        FROM pool_b pb JOIN pools p ON p.pool_id = pb.pool_id
-       WHERE p.aid1 = 0 AND pb.reserve1 > 0 AND pb.reserve2 > 0
-       ORDER BY pb.b, p.aid2, pb.reserve1 DESC
-    ),
+    WITH ${crossRateCtes(B, { from: lookbackFrom, to: toSec }, 'pool_state_snapshots')},
     vol_b AS (
       SELECT pool_id, time_bucket(${B}, bucket) AS b,
              SUM(volume_aid1)::numeric AS vol1, SUM(volume_aid2)::numeric AS vol2
@@ -367,23 +295,7 @@ export function buildRateRangeSql(name: 'coinbase' | 'dex-volume', res: TiledRes
        GROUP BY pool_id, time_bucket(${B}, bucket)
     ),
     priced AS (
-      SELECT vb.b,
-             CASE
-               WHEN p.aid1 = 0 AND od.beam_usd IS NOT NULL THEN (vb.vol1 / 1e8::numeric) * od.beam_usd
-               WHEN bp1.beam_reserve IS NOT NULL AND od.beam_usd IS NOT NULL THEN
-                 (vb.vol1 / power(10::numeric, a1.decimals)) * (bp1.beam_reserve / 1e8::numeric)
-                  / NULLIF(bp1.asset_reserve / power(10::numeric, a1.decimals), 0) * od.beam_usd
-               WHEN bp2.beam_reserve IS NOT NULL AND od.beam_usd IS NOT NULL THEN
-                 (vb.vol2 / power(10::numeric, a2.decimals)) * (bp2.beam_reserve / 1e8::numeric)
-                  / NULLIF(bp2.asset_reserve / power(10::numeric, a2.decimals), 0) * od.beam_usd
-             END AS usd
-        FROM vol_b vb
-        JOIN pools  p  ON p.pool_id = vb.pool_id
-        JOIN assets a1 ON a1.aid = p.aid1
-        JOIN assets a2 ON a2.aid = p.aid2
-        LEFT JOIN oracle_b    od  ON od.b  = vb.b
-        LEFT JOIN beam_paired bp1 ON bp1.b = vb.b AND bp1.asset_aid = p.aid1
-        LEFT JOIN beam_paired bp2 ON bp2.b = vb.b AND bp2.asset_aid = p.aid2
+      ${pricedSelect({ from: 'vol_b', cols: ['vol1', 'vol2'], as: 'usd' })}
     ),
     bucket_usd AS (SELECT b, SUM(usd)::float8 AS value FROM priced WHERE usd IS NOT NULL GROUP BY b),
     spine AS (
@@ -445,10 +357,14 @@ function trailing24hCol(rows: ExplorerRow[], code: string, fromSec: number): Ran
  * trailing-24h delta and fetch 24h of lookback; `total_*` pass through.
  */
 export async function explorerRangeSeries(col: string, isDelta: boolean, res: TiledRes, fromSec: number, toSec: number): Promise<RangePoint[]> {
-  const hMax = await heightAtOrBefore(toSec);
-  if (hMax === null) return [];
   const stopTs = isDelta ? fromSec - SECS_PER_DAY : fromSec;
-  const rows = await fetchNetworkRangeByHeight(resToDh(res), hMax, stopTs);
+  const [hMax, hStop] = await Promise.all([heightAtOrBefore(toSec), heightAtOrBefore(stopTs)]);
+  if (hMax === null) return [];
+  const dh = resToDh(res);
+  // Rows the window spans at step `dh`, plus a margin for uneven block times.
+  // A stop before the first block leaves the explorer's default page size.
+  const rowsNeeded = hStop === null ? undefined : Math.ceil((hMax - hStop) / dh) + 8;
+  const rows = await fetchNetworkRangeByHeight(dh, hMax, stopTs, rowsNeeded);
   return isDelta ? trailing24hCol(rows, col, fromSec) : passthroughCol(rows, col, fromSec);
 }
 

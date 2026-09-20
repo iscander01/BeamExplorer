@@ -1,6 +1,6 @@
 import { config } from '../../config.js';
 import { q } from '../../db.js';
-import { getLatestUsdPrices, valueUsd } from '../../services/pricing.js';
+import { getLatestUsdPrices, valueUsd } from './usd.js';
 import { readDaoStat, writeDaoStat } from './daoStatsCache.js';
 import { sourceLabel } from './daoTreasury.js';
 

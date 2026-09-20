@@ -228,12 +228,16 @@ const RES_DH: Record<'1m' | '1h' | '1d', number> = { '1m': 1, '1h': 60, '1d': 14
  * Windowed /hdrs fetch: page descending from `hMax` at step `dh` until the
  * oldest fetched row precedes `stopTs`, then return ascending. Tight to the
  * requested window (+caller-supplied 24h lookback for rate series) — NOT widened.
+ * `rowsNeeded` sizes each page to the window (the explorer otherwise serves
+ * PAGE_SIZE rows back from `hMax`, most of them past `stopTs`); the paging loop
+ * still covers an under-estimate.
  */
-export async function fetchNetworkRangeByHeight(dh: number, hMax: number, stopTs: number): Promise<ExplorerRow[]> {
+export async function fetchNetworkRangeByHeight(dh: number, hMax: number, stopTs: number, rowsNeeded = PAGE_SIZE): Promise<ExplorerRow[]> {
+  const nMax = Math.min(PAGE_SIZE, Math.max(1, rowsNeeded));
   const all: ExplorerRow[] = [];
   let cursor: number | undefined = hMax;
   for (let i = 0; i < 8; i += 1) { // bound: ~8 pages of 2000 rows caps a wide dh=1 window
-    const { rows, nextHMax } = await fetchPage(cursor, dh, PAGE_SIZE);
+    const { rows, nextHMax } = await fetchPage(cursor, dh, nMax);
     if (rows.length === 0) break;
     all.push(...rows);
     const oldest = Math.min(...rows.map((r) => r.ts));

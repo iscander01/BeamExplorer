@@ -4,6 +4,7 @@ import { fetchNetworkSeries, fetchNetworkSeriesHourly, type NetworkSeries, type 
 import { fetchBlackholeSeries } from '../../services/blackhole.js';
 import { supplyAtHeight } from '../../services/beamEmission.js';
 import { logger } from '../../logger.js';
+import { crossRateCtes, pricedSelect, tvlSql } from '../../services/crossRate.js';
 import {
   serveRange, RANGE_META, bridgeMultiSeries, bridgeSingleSeries, buildSimpleLevelSql, clampRange,
   RangeTooWideError, etagOf, type Res as RangeRes, type SimpleLevelChart,
@@ -34,142 +35,16 @@ function levelSql(name: SimpleLevelChart): Pick<ChartDef, 'sql' | 'hourlySql'> {
   };
 }
 
-// End-of-day reserves per pool, shared by every daily DEX query below. Reads
-// the liquidity_1h continuous aggregate instead of re-aggregating the raw
-// pool_state_snapshots hypertable's full history per refresh: the last hourly
-// `last` of a day is the day's last raw sample, so last-per-day over the hourly
-// rows equals last-per-day over the snapshots. The view is real-time
-// (materialized_only = false), so the not-yet-materialized tail is included.
-const POOL_DAY_CTE = `pool_day AS (
-    SELECT pool_id,
-           time_bucket(INTERVAL '1 day', bucket) AS day,
-           last(reserve1, bucket)::numeric AS reserve1,
-           last(reserve2, bucket)::numeric AS reserve2
-      FROM liquidity_1h
-     GROUP BY pool_id, time_bucket(INTERVAL '1 day', bucket)
-  )`;
-
-// Per-day DEX TVL in USD. End-of-day reserves per pool, priced via the
-// BEAM oracle directly (BEAM-quoted pools) or via the BEAM-paired pool's
-// reserve ratio (cross-rate). Doubles the priceable side to estimate full
-// pool value (AMMs hold equal value on both sides at equilibrium).
-//
-// Materializes a per-day cross-rate map (best BEAM-paired pool per asset
-// per day) and JOINs against it — avoids the O(N²) LATERAL pattern when
-// pool_state_snapshots is large.
-const TVL_SQL = `
-  WITH oracle_day AS (
-    SELECT time_bucket(INTERVAL '1 day', ts) AS day,
-           last(beam_usd, ts) AS beam_usd
-      FROM oracle_snapshots
-     GROUP BY day
-  ),
-  ${POOL_DAY_CTE},
-  beam_paired AS (
-    SELECT DISTINCT ON (pd.day, p.aid2)
-           pd.day,
-           p.aid2 AS asset_aid,
-           pd.reserve1::numeric AS beam_reserve,
-           pd.reserve2::numeric AS asset_reserve
-      FROM pool_day pd
-      JOIN pools p ON p.pool_id = pd.pool_id
-     WHERE p.aid1 = 0 AND pd.reserve1 > 0 AND pd.reserve2 > 0
-     ORDER BY pd.day, p.aid2, pd.reserve1 DESC
-  ),
-  priced AS (
-    SELECT pd.day,
-           CASE
-             WHEN p.aid1 = 0 AND od.beam_usd IS NOT NULL THEN
-               2 * (pd.reserve1 / 1e8::numeric) * od.beam_usd
-             WHEN bp1.beam_reserve IS NOT NULL AND od.beam_usd IS NOT NULL THEN
-               2 * (pd.reserve1 / power(10::numeric, a1.decimals))
-                 * (bp1.beam_reserve / 1e8::numeric)
-                 / NULLIF(bp1.asset_reserve / power(10::numeric, a1.decimals), 0)
-                 * od.beam_usd
-             WHEN bp2.beam_reserve IS NOT NULL AND od.beam_usd IS NOT NULL THEN
-               2 * (pd.reserve2 / power(10::numeric, a2.decimals))
-                 * (bp2.beam_reserve / 1e8::numeric)
-                 / NULLIF(bp2.asset_reserve / power(10::numeric, a2.decimals), 0)
-                 * od.beam_usd
-           END AS tvl_usd
-      FROM pool_day pd
-      JOIN pools  p  ON p.pool_id = pd.pool_id
-      JOIN assets a1 ON a1.aid = p.aid1
-      JOIN assets a2 ON a2.aid = p.aid2
-      LEFT JOIN oracle_day  od  ON od.day  = pd.day
-      LEFT JOIN beam_paired bp1 ON bp1.day = pd.day AND bp1.asset_aid = p.aid1
-      LEFT JOIN beam_paired bp2 ON bp2.day = pd.day AND bp2.asset_aid = p.aid2
-     WHERE pd.reserve1 > 0 OR pd.reserve2 > 0
-  )
-  SELECT EXTRACT(epoch FROM day)::bigint AS ts,
-         SUM(tvl_usd)::float8 AS value
-    FROM priced
-   WHERE tvl_usd IS NOT NULL
-   GROUP BY day
-   ORDER BY 1
-`;
-
-// Hourly DEX TVL in USD over a recent bounded window. Same cross-rate pricing
-// as TVL_SQL, bucketed hourly. A level metric, so no spine/rolling — hours
-// without a snapshot simply produce no point (pool_state_snapshots is written
-// every ~30s, so gaps are rare).
-const TVL_HOURLY_SQL = `
-  WITH oracle_h AS (
-    SELECT time_bucket(INTERVAL '1 hour', ts) AS hour, last(beam_usd, ts) AS beam_usd
-      FROM oracle_snapshots
-     WHERE ts > now() - INTERVAL '35 days'
-     GROUP BY 1
-  ),
-  pool_h AS (
-    SELECT pool_id, time_bucket(INTERVAL '1 hour', ts) AS hour,
-           last(reserve1, ts)::numeric AS reserve1,
-           last(reserve2, ts)::numeric AS reserve2
-      FROM pool_state_snapshots
-     WHERE ts > now() - INTERVAL '35 days'
-     GROUP BY pool_id, time_bucket(INTERVAL '1 hour', ts)
-  ),
-  beam_paired AS (
-    SELECT DISTINCT ON (ph.hour, p.aid2)
-           ph.hour, p.aid2 AS asset_aid,
-           ph.reserve1::numeric AS beam_reserve,
-           ph.reserve2::numeric AS asset_reserve
-      FROM pool_h ph
-      JOIN pools p ON p.pool_id = ph.pool_id
-     WHERE p.aid1 = 0 AND ph.reserve1 > 0 AND ph.reserve2 > 0
-     ORDER BY ph.hour, p.aid2, ph.reserve1 DESC
-  ),
-  priced AS (
-    SELECT ph.hour,
-           CASE
-             WHEN p.aid1 = 0 AND od.beam_usd IS NOT NULL THEN
-               2 * (ph.reserve1 / 1e8::numeric) * od.beam_usd
-             WHEN bp1.beam_reserve IS NOT NULL AND od.beam_usd IS NOT NULL THEN
-               2 * (ph.reserve1 / power(10::numeric, a1.decimals))
-                 * (bp1.beam_reserve / 1e8::numeric)
-                 / NULLIF(bp1.asset_reserve / power(10::numeric, a1.decimals), 0)
-                 * od.beam_usd
-             WHEN bp2.beam_reserve IS NOT NULL AND od.beam_usd IS NOT NULL THEN
-               2 * (ph.reserve2 / power(10::numeric, a2.decimals))
-                 * (bp2.beam_reserve / 1e8::numeric)
-                 / NULLIF(bp2.asset_reserve / power(10::numeric, a2.decimals), 0)
-                 * od.beam_usd
-           END AS tvl_usd
-      FROM pool_h ph
-      JOIN pools  p  ON p.pool_id = ph.pool_id
-      JOIN assets a1 ON a1.aid = p.aid1
-      JOIN assets a2 ON a2.aid = p.aid2
-      LEFT JOIN oracle_h    od  ON od.hour  = ph.hour
-      LEFT JOIN beam_paired bp1 ON bp1.hour = ph.hour AND bp1.asset_aid = p.aid1
-      LEFT JOIN beam_paired bp2 ON bp2.hour = ph.hour AND bp2.asset_aid = p.aid2
-     WHERE ph.reserve1 > 0 OR ph.reserve2 > 0
-  )
-  SELECT EXTRACT(epoch FROM hour)::bigint AS ts,
-         SUM(tvl_usd)::float8 AS value
-    FROM priced
-   WHERE tvl_usd IS NOT NULL
-   GROUP BY hour
-   ORDER BY 1
-`;
+// Per-bucket DEX TVL in USD (services/crossRate.ts): end-of-bucket reserves per
+// pool, priced via the BEAM oracle (BEAM-quoted pools) or the BEAM-paired pool's
+// reserve ratio (cross-rate), doubled to estimate full pool value. The daily tier
+// reads the liquidity_1h aggregate over the whole history; the hourly tier scans
+// raw pool_state_snapshots over the trailing window. A level metric, so no
+// spine/rolling — hours without a snapshot simply produce no point.
+const DAY = "INTERVAL '1 day'";
+const HOUR = "INTERVAL '1 hour'";
+const TVL_SQL = tvlSql(DAY, 'all', 'liquidity_1h');
+const TVL_HOURLY_SQL = tvlSql(HOUR, { recentDays: HOURLY_WINDOW_DAYS }, 'pool_state_snapshots');
 
 // Coinbase transactions per day. BEAM emits exactly one coinbase OUTPUT per
 // block, so the coinbase baseline equals the block count per day. Drawn as a
@@ -325,38 +200,18 @@ const POOLS_CLOSED_SQL = `
 `;
 
 // Per-day DEX volume in USD. Daily granularity throughout (we don't actually
-// need hourly precision for a multi-year chart). Materializes:
-//   - per-day BEAM/USD from oracle_snapshots,
-//   - per-day BEAM-paired cross-rates (best-liquidity pool per asset),
-// then JOINs against trade_daily. Replaces the previous per-row LATERAL
-// pattern which was O(N²) on pool_state_snapshots.
+// need hourly precision for a multi-year chart). Per-day BEAM/USD and
+// cross-rates come from services/crossRate.ts, JOINed against trade_b.
 //
 // Finally projects onto a calendar-day spine (first trading day → today) with
-// COALESCE(…, 0): a day with no trades produces no `trade_daily` row, so without
+// COALESCE(…, 0): a day with no trades produces no `trade_b` row, so without
 // this the series silently truncated at the last day with a trade and left gaps
 // mid-history. Now every quiet day renders as an explicit 0.
 const DEX_VOLUME_SQL = `
-  WITH oracle_day AS (
-    SELECT time_bucket(INTERVAL '1 day', ts) AS day,
-           last(beam_usd, ts) AS beam_usd
-      FROM oracle_snapshots
-     GROUP BY day
-  ),
-  ${POOL_DAY_CTE},
-  beam_paired AS (
-    SELECT DISTINCT ON (pd.day, p.aid2)
-           pd.day,
-           p.aid2 AS asset_aid,
-           pd.reserve1::numeric AS beam_reserve,
-           pd.reserve2::numeric AS asset_reserve
-      FROM pool_day pd
-      JOIN pools p ON p.pool_id = pd.pool_id
-     WHERE p.aid1 = 0 AND pd.reserve1 > 0 AND pd.reserve2 > 0
-     ORDER BY pd.day, p.aid2, pd.reserve1 DESC
-  ),
-  trade_daily AS (
+  WITH ${crossRateCtes(DAY, 'all', 'liquidity_1h')},
+  trade_b AS (
     SELECT t.pool_id,
-           time_bucket(INTERVAL '1 day', t.block_ts) AS day,
+           time_bucket(INTERVAL '1 day', t.block_ts) AS b,
            SUM(t.volume_aid1)::numeric AS vol1,
            SUM(t.volume_aid2)::numeric AS vol2
       FROM trades t
@@ -364,34 +219,13 @@ const DEX_VOLUME_SQL = `
      GROUP BY t.pool_id, time_bucket(INTERVAL '1 day', t.block_ts)
   ),
   priced AS (
-    SELECT td.day,
-           CASE
-             WHEN p.aid1 = 0 AND od.beam_usd IS NOT NULL THEN
-               (td.vol1 / 1e8::numeric) * od.beam_usd
-             WHEN bp1.beam_reserve IS NOT NULL AND od.beam_usd IS NOT NULL THEN
-               (td.vol1 / power(10::numeric, a1.decimals))
-                * (bp1.beam_reserve / 1e8::numeric)
-                / NULLIF(bp1.asset_reserve / power(10::numeric, a1.decimals), 0)
-                * od.beam_usd
-             WHEN bp2.beam_reserve IS NOT NULL AND od.beam_usd IS NOT NULL THEN
-               (td.vol2 / power(10::numeric, a2.decimals))
-                * (bp2.beam_reserve / 1e8::numeric)
-                / NULLIF(bp2.asset_reserve / power(10::numeric, a2.decimals), 0)
-                * od.beam_usd
-           END AS usd_value
-      FROM trade_daily td
-      JOIN pools  p  ON p.pool_id = td.pool_id
-      JOIN assets a1 ON a1.aid = p.aid1
-      JOIN assets a2 ON a2.aid = p.aid2
-      LEFT JOIN oracle_day  od  ON od.day  = td.day
-      LEFT JOIN beam_paired bp1 ON bp1.day = td.day AND bp1.asset_aid = p.aid1
-      LEFT JOIN beam_paired bp2 ON bp2.day = td.day AND bp2.asset_aid = p.aid2
+    ${pricedSelect({ from: 'trade_b', cols: ['vol1', 'vol2'], as: 'usd_value' })}
   ),
   daily_usd AS (
-    SELECT day, SUM(usd_value)::float8 AS value
+    SELECT b AS day, SUM(usd_value)::float8 AS value
       FROM priced
      WHERE usd_value IS NOT NULL
-     GROUP BY day
+     GROUP BY b
   ),
   -- Calendar-day spine from the first trading day to today, so no-trade days
   -- render as an explicit 0 instead of vanishing.
@@ -414,32 +248,9 @@ const DEX_VOLUME_SQL = `
 // as DEX_VOLUME_SQL. Fetches 36d so every visible point (35d) has a full
 // 24-bucket window; quiet hours are zero-filled via the spine.
 const DEX_VOLUME_HOURLY_SQL = `
-  WITH oracle_h AS (
-    SELECT time_bucket(INTERVAL '1 hour', ts) AS hour, last(beam_usd, ts) AS beam_usd
-      FROM oracle_snapshots
-     WHERE ts > now() - INTERVAL '36 days'
-     GROUP BY 1
-  ),
-  pool_h AS (
-    SELECT pool_id, time_bucket(INTERVAL '1 hour', ts) AS hour,
-           last(reserve1, ts)::numeric AS reserve1,
-           last(reserve2, ts)::numeric AS reserve2
-      FROM pool_state_snapshots
-     WHERE ts > now() - INTERVAL '36 days'
-     GROUP BY pool_id, time_bucket(INTERVAL '1 hour', ts)
-  ),
-  beam_paired AS (
-    SELECT DISTINCT ON (ph.hour, p.aid2)
-           ph.hour, p.aid2 AS asset_aid,
-           ph.reserve1::numeric AS beam_reserve,
-           ph.reserve2::numeric AS asset_reserve
-      FROM pool_h ph
-      JOIN pools p ON p.pool_id = ph.pool_id
-     WHERE p.aid1 = 0 AND ph.reserve1 > 0 AND ph.reserve2 > 0
-     ORDER BY ph.hour, p.aid2, ph.reserve1 DESC
-  ),
-  trade_h AS (
-    SELECT t.pool_id, time_bucket(INTERVAL '1 hour', t.block_ts) AS hour,
+  WITH ${crossRateCtes(HOUR, { recentDays: 36 }, 'pool_state_snapshots')},
+  trade_b AS (
+    SELECT t.pool_id, time_bucket(INTERVAL '1 hour', t.block_ts) AS b,
            SUM(t.volume_aid1)::numeric AS vol1,
            SUM(t.volume_aid2)::numeric AS vol2
       FROM trades t
@@ -448,32 +259,11 @@ const DEX_VOLUME_HOURLY_SQL = `
      GROUP BY t.pool_id, time_bucket(INTERVAL '1 hour', t.block_ts)
   ),
   priced AS (
-    SELECT th.hour,
-           CASE
-             WHEN p.aid1 = 0 AND od.beam_usd IS NOT NULL THEN
-               (th.vol1 / 1e8::numeric) * od.beam_usd
-             WHEN bp1.beam_reserve IS NOT NULL AND od.beam_usd IS NOT NULL THEN
-               (th.vol1 / power(10::numeric, a1.decimals))
-                * (bp1.beam_reserve / 1e8::numeric)
-                / NULLIF(bp1.asset_reserve / power(10::numeric, a1.decimals), 0)
-                * od.beam_usd
-             WHEN bp2.beam_reserve IS NOT NULL AND od.beam_usd IS NOT NULL THEN
-               (th.vol2 / power(10::numeric, a2.decimals))
-                * (bp2.beam_reserve / 1e8::numeric)
-                / NULLIF(bp2.asset_reserve / power(10::numeric, a2.decimals), 0)
-                * od.beam_usd
-           END AS usd_value
-      FROM trade_h th
-      JOIN pools  p  ON p.pool_id = th.pool_id
-      JOIN assets a1 ON a1.aid = p.aid1
-      JOIN assets a2 ON a2.aid = p.aid2
-      LEFT JOIN oracle_h    od  ON od.hour  = th.hour
-      LEFT JOIN beam_paired bp1 ON bp1.hour = th.hour AND bp1.asset_aid = p.aid1
-      LEFT JOIN beam_paired bp2 ON bp2.hour = th.hour AND bp2.asset_aid = p.aid2
+    ${pricedSelect({ from: 'trade_b', cols: ['vol1', 'vol2'], as: 'usd_value' })}
   ),
   hourly_usd AS (
-    SELECT hour, SUM(usd_value)::float8 AS value
-      FROM priced WHERE usd_value IS NOT NULL GROUP BY hour
+    SELECT b AS hour, SUM(usd_value)::float8 AS value
+      FROM priced WHERE usd_value IS NOT NULL GROUP BY b
   ),
   spine AS (
     SELECT generate_series(
@@ -614,48 +404,9 @@ async function marketCapSeries(bucket: '1 day' | '1 hour', recentOnly: boolean):
 // quiet day isn't "zero volatility" — and injecting 0-returns would deflate the
 // index during the (frequent) quiet stretches.
 const DEX_VOL_SQL = `
-  WITH oracle_day AS (
-    SELECT time_bucket(INTERVAL '1 day', ts) AS day,
-           last(beam_usd, ts) AS beam_usd
-      FROM oracle_snapshots
-     GROUP BY day
-  ),
-  ${POOL_DAY_CTE},
-  beam_paired AS (
-    SELECT DISTINCT ON (pd.day, p.aid2)
-           pd.day,
-           p.aid2 AS asset_aid,
-           pd.reserve1::numeric AS beam_reserve,
-           pd.reserve2::numeric AS asset_reserve
-      FROM pool_day pd
-      JOIN pools p ON p.pool_id = pd.pool_id
-     WHERE p.aid1 = 0 AND pd.reserve1 > 0 AND pd.reserve2 > 0
-     ORDER BY pd.day, p.aid2, pd.reserve1 DESC
-  ),
+  WITH ${crossRateCtes(DAY, 'all', 'liquidity_1h')},
   pool_tvl AS (
-    SELECT pd.pool_id,
-           pd.day,
-           CASE
-             WHEN p.aid1 = 0 AND od.beam_usd IS NOT NULL THEN
-               2 * (pd.reserve1 / 1e8::numeric) * od.beam_usd
-             WHEN bp1.beam_reserve IS NOT NULL AND od.beam_usd IS NOT NULL THEN
-               2 * (pd.reserve1 / power(10::numeric, a1.decimals))
-                 * (bp1.beam_reserve / 1e8::numeric)
-                 / NULLIF(bp1.asset_reserve / power(10::numeric, a1.decimals), 0)
-                 * od.beam_usd
-             WHEN bp2.beam_reserve IS NOT NULL AND od.beam_usd IS NOT NULL THEN
-               2 * (pd.reserve2 / power(10::numeric, a2.decimals))
-                 * (bp2.beam_reserve / 1e8::numeric)
-                 / NULLIF(bp2.asset_reserve / power(10::numeric, a2.decimals), 0)
-                 * od.beam_usd
-           END AS tvl_usd
-      FROM pool_day pd
-      JOIN pools  p  ON p.pool_id = pd.pool_id
-      JOIN assets a1 ON a1.aid = p.aid1
-      JOIN assets a2 ON a2.aid = p.aid2
-      LEFT JOIN oracle_day  od  ON od.day  = pd.day
-      LEFT JOIN beam_paired bp1 ON bp1.day = pd.day AND bp1.asset_aid = p.aid1
-      LEFT JOIN beam_paired bp2 ON bp2.day = pd.day AND bp2.asset_aid = p.aid2
+    ${pricedSelect({ from: 'pool_b', cols: ['reserve1', 'reserve2'], as: 'tvl_usd', double: true, select: 's.pool_id,' })}
   ),
   pool_close AS (
     SELECT pool_id,
@@ -681,7 +432,7 @@ const DEX_VOL_SQL = `
     SELECT pv.day,
            (SUM(pv.vol * pt.tvl_usd) / NULLIF(SUM(pt.tvl_usd), 0))::float8 AS value
       FROM pool_vol pv
-      JOIN pool_tvl pt ON pt.pool_id = pv.pool_id AND pt.day = pv.day
+      JOIN pool_tvl pt ON pt.pool_id = pv.pool_id AND pt.b = pv.day
      WHERE pv.n >= 30 AND pv.vol IS NOT NULL
        AND pt.tvl_usd IS NOT NULL AND pt.tvl_usd >= 100
      GROUP BY pv.day

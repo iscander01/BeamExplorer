@@ -1,7 +1,8 @@
 import { q } from '../../db.js';
 
 /**
- * USD valuation table built off the BEAM oracle median + on-chain pool reserves.
+ * Present-time USD valuation built off the BEAM oracle median + on-chain pool
+ * reserves.
  *
  * Strategy: for each non-BEAM asset, find the **deepest BEAM-quoted pool**
  * (pool where aid1=0=BEAM is paired with that asset) and derive
@@ -9,19 +10,31 @@ import { q } from '../../db.js';
  *     usd_per_whole_unit = beam_usd × (BEAM-per-aid rate from that pool)
  *
  * "Deepest" = highest BEAM reserve (reserve1, since BEAM is canonical aid1 < other).
- * The all-time BEAM/USD price is sourced from the most recent oracle snapshot.
+ * BEAM/USD is the most recent oracle snapshot.
  *
- * Assets not reachable via a BEAM-quoted pool have no USD rate (Map omits them);
- * callers treat that as "no USD valuation possible".
+ * Two tables share that rule and differ in one policy:
+ *  - `loadUsdTable` (stats, pairs, trades, /cg, og) prices through live pools
+ *    only and omits assets without a USD path.
+ *  - `getLatestUsdPrices` (DAO treasury/revenue) covers the whole asset catalog
+ *    and keeps destroyed pools: their final reserves still price an asset the
+ *    DAO holds after its only pool was closed.
  *
- * Cached across requests for a short TTL: the underlying data only changes
- * when the indexer ticks (30s), and every consuming route already declares
- * `max-age=15` or more, so concurrent pollers share one computation.
+ * Both are cached across requests for a short TTL: the underlying data only
+ * changes when the indexer ticks (30s), and every consuming route already
+ * declares `max-age=15` or more, so concurrent pollers share one computation.
  */
 export interface UsdTable {
   beam_usd: number | null;
   /** USD value of 1 *whole unit* (post-decimals) of the given AID. */
   perAid: Map<number, number>;
+}
+
+export interface AssetPrice {
+  aid: number;
+  decimals: number;
+  symbol: string;
+  /** USD per 1 whole unit of the asset; null when the asset has no BEAM pool. */
+  usdPerUnit: number | null;
 }
 
 interface DeepestPoolRow {
@@ -37,22 +50,28 @@ interface OracleRow {
 
 // TTL sits inside the weakest declared client tolerance (max-age=15). Caching
 // the promise (not the value) also collapses concurrent cache-miss callers
-// into a single pair of queries.
+// into a single pair of queries. A failure is never cached — the next caller
+// retries immediately.
 const USD_TTL_MS = 10_000;
-let cached: { at: number; promise: Promise<UsdTable> } | null = null;
-
-export async function loadUsdTable(): Promise<UsdTable> {
-  if (cached && Date.now() - cached.at < USD_TTL_MS) return cached.promise;
-  const entry = { at: Date.now(), promise: fetchUsdTable() };
-  cached = entry;
-  try {
-    return await entry.promise;
-  } catch (err) {
-    // Never cache a failure — the next caller retries immediately.
-    if (cached === entry) cached = null;
-    throw err;
-  }
+function memo<T>(fetch: () => Promise<T>): () => Promise<T> {
+  let cached: { at: number; promise: Promise<T> } | null = null;
+  return async () => {
+    if (cached && Date.now() - cached.at < USD_TTL_MS) return cached.promise;
+    const entry = { at: Date.now(), promise: fetch() };
+    cached = entry;
+    try {
+      return await entry.promise;
+    } catch (err) {
+      if (cached === entry) cached = null;
+      throw err;
+    }
+  };
 }
+
+export const loadUsdTable: () => Promise<UsdTable> = memo(fetchUsdTable);
+
+/** Latest USD price per catalogued asset, keyed by aid. */
+export const getLatestUsdPrices: () => Promise<Map<number, AssetPrice>> = memo(fetchAssetPrices);
 
 /** Latest oracle BEAM/USD row, uncached. */
 export async function readBeamUsd(): Promise<number | null> {
@@ -60,6 +79,27 @@ export async function readBeamUsd(): Promise<number | null> {
     'SELECT beam_usd::text FROM oracle_snapshots ORDER BY ts DESC LIMIT 1',
   );
   return rows[0] ? Number(rows[0].beam_usd) : null;
+}
+
+// Deepest BEAM-quoted pool per asset: `asset_aid`, `beam_reserve`,
+// `asset_reserve`. Latest snapshot per pool via a per-pool LATERAL seek
+// (indexed LIMIT 1) instead of a DISTINCT ON over the whole
+// pool_state_snapshots hypertable, which full-scans (~4.5s).
+function deepestBeamPoolsCte(includeDestroyed: boolean): string {
+  return `
+    SELECT DISTINCT ON (p.aid2) p.aid2 AS asset_aid,
+           l.reserve1::numeric AS beam_reserve, l.reserve2::numeric AS asset_reserve
+      FROM pools p
+      CROSS JOIN LATERAL (
+        SELECT reserve1, reserve2
+          FROM pool_state_snapshots ss
+         WHERE ss.pool_id = p.pool_id
+         ORDER BY ss.ts DESC
+         LIMIT 1
+      ) l
+     WHERE p.aid1 = 0 AND l.reserve1 > 0 AND l.reserve2 > 0
+       ${includeDestroyed ? '' : 'AND p.destroyed_at_height IS NULL'}
+     ORDER BY p.aid2, l.reserve1 DESC`;
 }
 
 async function fetchUsdTable(): Promise<UsdTable> {
@@ -71,36 +111,12 @@ async function fetchUsdTable(): Promise<UsdTable> {
 
   if (beamUsd === null) return { beam_usd: beamUsd, perAid };
 
-  // For each non-BEAM aid that appears in a BEAM-quoted pool, take the deepest
-  // such pool by BEAM reserve and derive USD-per-whole-unit.
   const { rows } = await q<DeepestPoolRow>(`
-    WITH beam_pools AS (
-      -- Latest snapshot per BEAM-quoted pool via a per-pool LATERAL seek
-      -- (indexed LIMIT 1) instead of a DISTINCT ON over the whole
-      -- pool_state_snapshots hypertable, which full-scans (~4.5s).
-      SELECT p.pool_id, p.aid2 AS aid_other, l.reserve1 AS beam_reserve,
-             l.reserve2 AS other_reserve, a2.decimals AS other_decimals
-        FROM pools p
-        JOIN assets a2  ON a2.aid    = p.aid2
-        CROSS JOIN LATERAL (
-          SELECT reserve1, reserve2
-            FROM pool_state_snapshots ss
-           WHERE ss.pool_id = p.pool_id
-           ORDER BY ss.ts DESC
-           LIMIT 1
-        ) l
-       WHERE p.aid1 = 0
-         AND p.destroyed_at_height IS NULL
-         AND l.reserve1 > 0
-         AND l.reserve2 > 0
-    ),
-    ranked AS (
-      SELECT *, ROW_NUMBER() OVER (PARTITION BY aid_other ORDER BY beam_reserve DESC) AS rn
-        FROM beam_pools
-    )
-    SELECT aid_other::text, beam_reserve::text, other_reserve::text, other_decimals
-      FROM ranked
-     WHERE rn = 1
+    WITH beam_paired AS (${deepestBeamPoolsCte(false)})
+    SELECT bp.asset_aid::text AS aid_other, bp.beam_reserve::text,
+           bp.asset_reserve::text AS other_reserve, a2.decimals AS other_decimals
+      FROM beam_paired bp
+      JOIN assets a2 ON a2.aid = bp.asset_aid
   `);
 
   for (const r of rows) {
@@ -114,4 +130,44 @@ async function fetchUsdTable(): Promise<UsdTable> {
   }
 
   return { beam_usd: beamUsd, perAid };
+}
+
+async function fetchAssetPrices(): Promise<Map<number, AssetPrice>> {
+  const { rows } = await q<{ aid: string; decimals: number; symbol: string | null; usd_per_unit: string | null }>(
+    `WITH beam AS (
+       SELECT beam_usd AS usd FROM oracle_snapshots ORDER BY ts DESC LIMIT 1
+     ),
+     beam_paired AS (${deepestBeamPoolsCte(true)})
+     SELECT a.aid::text AS aid,
+            a.decimals,
+            COALESCE(a.short_name, a.unit_name, a.name) AS symbol,
+            CASE
+              WHEN a.aid = 0 THEN (SELECT usd FROM beam)
+              WHEN bp.beam_reserve IS NOT NULL THEN
+                (bp.beam_reserve / 1e8::numeric)
+                / NULLIF(bp.asset_reserve / power(10::numeric, a.decimals), 0)
+                * (SELECT usd FROM beam)
+              ELSE NULL
+            END::text AS usd_per_unit
+       FROM assets a
+       LEFT JOIN beam_paired bp ON bp.asset_aid = a.aid`,
+  );
+  const m = new Map<number, AssetPrice>();
+  for (const r of rows) {
+    const aid = Number(r.aid);
+    m.set(aid, {
+      aid,
+      decimals: r.decimals,
+      symbol: r.symbol ?? `aid:${aid}`,
+      usdPerUnit: r.usd_per_unit != null ? Number(r.usd_per_unit) : null,
+    });
+  }
+  return m;
+}
+
+/** USD value of `amountGroths` of an asset, or null when the asset is unpriceable. */
+export function valueUsd(price: AssetPrice | undefined, amountGroths: string | bigint): number | null {
+  if (!price || price.usdPerUnit == null) return null;
+  const whole = Number(amountGroths) / Math.pow(10, price.decimals);
+  return whole * price.usdPerUnit;
 }

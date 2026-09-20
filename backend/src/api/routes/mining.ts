@@ -43,35 +43,58 @@ const POOL_NAME_BY_ID = new Map<string, string>(POOLS.map((p) => [p.id, p.name])
 
 export async function miningRoutes(app: FastifyInstance): Promise<void> {
   app.get('/mining/pools', async (_req, reply) => {
-    // Latest snapshot per pool.
-    const { rows } = await q<SnapRow>(
-      `SELECT DISTINCT ON (pool_id)
-              pool_id, ts, hashrate::text, miners, workers, blocks_24h,
-              last_block_height::text, last_block_ts, fee::text, min_payout::text
-         FROM mining_pool_snapshots
-        ORDER BY pool_id, ts DESC`,
-    );
+    // Six independent reads, issued together (the pg pool is max 10).
+    const [{ rows }, net, { rows: sparkRows }, { rows: bHourRows }, { rows: bDayRows }, { rows: dayTotalRows }] = await Promise.all([
+      // Latest snapshot per pool.
+      q<SnapRow>(
+        `SELECT DISTINCT ON (pool_id)
+                pool_id, ts, hashrate::text, miners, workers, blocks_24h,
+                last_block_height::text, last_block_ts, fee::text, min_payout::text
+           FROM mining_pool_snapshots
+          ORDER BY pool_id, ts DESC`,
+      ),
+      // Canonical network hashrate + tip height from the shared snapshot helper,
+      // so this matches /api/network and the Health page byte-for-byte.
+      getNetworkSnapshot(),
+      // Per-pool hashrate sparkline: past 7 days, hourly-averaged (≤168 points),
+      // oldest→newest. Snapshots are written per block (~1/min), so raw rows would
+      // be ~10k/pool — bucket to keep the payload and the sparkline sane.
+      q<SparkRow>(
+        `SELECT pool_id,
+                EXTRACT(epoch FROM time_bucket('1 hour', ts))::bigint AS ts,
+                AVG(hashrate)::float8 AS hashrate
+           FROM mining_pool_snapshots
+          WHERE hashrate IS NOT NULL
+            AND ts >= now() - interval '7 days'
+          GROUP BY pool_id, time_bucket('1 hour', ts)
+          ORDER BY pool_id, time_bucket('1 hour', ts)`,
+      ),
+      // Per-pool blocks in the past hour (pools-table column). Window on block_ts
+      // directly — the hypertable partition column — so this reads one recent chunk.
+      q<BlocksLast100Row>(
+        `WITH recent AS (SELECT height FROM block_metrics WHERE block_ts >= now() - interval '1 hour')
+         SELECT b.pool_id, COUNT(*)::int AS n
+           FROM mining_pool_blocks b
+           JOIN recent r ON r.height = b.height
+          GROUP BY b.pool_id`,
+      ),
+      // Per-pool blocks in the past 24h (distribution donut).
+      q<BlocksLast100Row>(
+        `WITH recent AS (SELECT height FROM block_metrics WHERE block_ts >= now() - interval '24 hours')
+         SELECT b.pool_id, COUNT(*)::int AS n
+           FROM mining_pool_blocks b
+           JOIN recent r ON r.height = b.height
+          GROUP BY b.pool_id`,
+      ),
+      // Total network blocks in the past 24h — the donut's denominator, so the
+      // "Unknown" slice = total − attributed (never a hardcoded block count).
+      q<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM block_metrics WHERE block_ts >= now() - interval '24 hours'`,
+      ),
+    ]);
     const byId = new Map(rows.map((r) => [r.pool_id, r]));
-
-    // Canonical network hashrate + tip height from the shared snapshot helper,
-    // so this matches /api/network and the Health page byte-for-byte.
-    const net = await getNetworkSnapshot();
     const networkHashrate = net.hashrate;
     const blockHeight = net.tip_height;
-
-    // Per-pool hashrate sparkline: past 7 days, hourly-averaged (≤168 points),
-    // oldest→newest. Snapshots are written per block (~1/min), so raw rows would
-    // be ~10k/pool — bucket to keep the payload and the sparkline sane.
-    const { rows: sparkRows } = await q<SparkRow>(
-      `SELECT pool_id,
-              EXTRACT(epoch FROM time_bucket('1 hour', ts))::bigint AS ts,
-              AVG(hashrate)::float8 AS hashrate
-         FROM mining_pool_snapshots
-        WHERE hashrate IS NOT NULL
-          AND ts >= now() - interval '7 days'
-        GROUP BY pool_id, time_bucket('1 hour', ts)
-        ORDER BY pool_id, time_bucket('1 hour', ts)`,
-    );
     // Group into pool_id → { ts, value }[] (already oldest→newest after ORDER BY).
     const sparkByPool = new Map<string, { ts: number; value: number }[]>();
     for (const r of sparkRows) {
@@ -79,33 +102,8 @@ export async function miningRoutes(app: FastifyInstance): Promise<void> {
       arr.push({ ts: Number(r.ts), value: Number(r.hashrate) });
       sparkByPool.set(r.pool_id, arr);
     }
-
-    // Per-pool blocks in the past hour (pools-table column). Window on block_ts
-    // directly — the hypertable partition column — so this reads one recent chunk.
-    const { rows: bHourRows } = await q<BlocksLast100Row>(
-      `WITH recent AS (SELECT height FROM block_metrics WHERE block_ts >= now() - interval '1 hour')
-       SELECT b.pool_id, COUNT(*)::int AS n
-         FROM mining_pool_blocks b
-         JOIN recent r ON r.height = b.height
-        GROUP BY b.pool_id`,
-    );
     const blocksHourByPool = new Map<string, number>(bHourRows.map((r) => [r.pool_id, r.n]));
-
-    // Per-pool blocks in the past 24h (distribution donut).
-    const { rows: bDayRows } = await q<BlocksLast100Row>(
-      `WITH recent AS (SELECT height FROM block_metrics WHERE block_ts >= now() - interval '24 hours')
-       SELECT b.pool_id, COUNT(*)::int AS n
-         FROM mining_pool_blocks b
-         JOIN recent r ON r.height = b.height
-        GROUP BY b.pool_id`,
-    );
     const blocksDayByPool = new Map<string, number>(bDayRows.map((r) => [r.pool_id, r.n]));
-
-    // Total network blocks in the past 24h — the donut's denominator, so the
-    // "Unknown" slice = total − attributed (never a hardcoded block count).
-    const { rows: dayTotalRows } = await q<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM block_metrics WHERE block_ts >= now() - interval '24 hours'`,
-    );
     const blocks24hTotal = dayTotalRows[0]?.n ?? 0;
 
     const pools = POOLS.map((p) => {
