@@ -1,6 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LineStyle, LineType, type LineData, type LineSeriesPartialOptions, type UTCTimestamp } from 'lightweight-charts';
+import {
+  LineStyle,
+  LineType,
+  type LineData,
+  type LineSeriesPartialOptions,
+  type UTCTimestamp,
+} from 'lightweight-charts';
 import AssetIcon, { normalizeOptColor } from '@app/shared/components/AssetsIcon';
 import { AssetAid, assetLabel } from '@app/shared/components/AssetLabel';
 import { PALLETE_ASSETS } from '@app/shared/constants';

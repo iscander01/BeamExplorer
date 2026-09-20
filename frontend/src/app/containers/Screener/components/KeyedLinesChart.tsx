@@ -400,7 +400,14 @@ export const KeyedLinesChart: React.FC<Props> = ({
       const tip = tooltipRef.current;
       const host = innerRef.current;
       if (!tip || !host) return;
-      const { series: ser, colorByKey: colors, hidden: hid, formatter: fmt, rowLabel: label, windowRows: win } = viewRef.current;
+      const {
+        series: ser,
+        colorByKey: colors,
+        hidden: hid,
+        formatter: fmt,
+        rowLabel: label,
+        windowRows: win,
+      } = viewRef.current;
 
       const rows: Array<{ key: string; label: string; value: number; y: number | null }> = [];
       if (param && param.time != null && param.point) {
@@ -410,7 +417,12 @@ export const KeyedLinesChart: React.FC<Props> = ({
           if (!line) continue;
           const d = param.seriesData.get(line) as { value?: number } | undefined;
           if (!d || typeof d.value !== 'number') continue;
-          rows.push({ key: s.key, label: label ? label(s) : s.label, value: d.value, y: line.priceToCoordinate(d.value) });
+          rows.push({
+            key: s.key,
+            label: label ? label(s) : s.label,
+            value: d.value,
+            y: line.priceToCoordinate(d.value),
+          });
         }
       }
 
