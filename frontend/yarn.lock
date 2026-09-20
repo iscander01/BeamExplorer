@@ -5249,6 +5249,7 @@ __metadata:
     webpack: "npm:^5.104.1"
     webpack-cli: "npm:^6.0.1"
     webpack-dev-server: "npm:^5.2.5"
+    webpack-merge: "npm:^6.0.1"
   languageName: unknown
   linkType: soft
 

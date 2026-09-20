@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { api } from './api/client';
 import type {
   ApiStats,
@@ -340,17 +340,6 @@ export const useAsset = (aid: number | undefined): AsyncState<ApiAsset> & { refe
 
 export const useAssets = (): AsyncState<ApiAssetsList> & { refetch: () => void } =>
   usePolling(() => api.assets(), [], 60_000);
-
-/** aid → catalogue entry, built once per /api/assets payload. Replaces the
- *  per-page pattern of fetching the catalogue and hand-rolling the Map. */
-export function useAssetIndex(): Map<number, ApiAssetsList['assets'][number]> {
-  const { data } = useAssets();
-  return useMemo(() => {
-    const m = new Map<number, ApiAssetsList['assets'][number]>();
-    for (const a of data?.assets ?? []) m.set(a.aid, a);
-    return m;
-  }, [data]);
-}
 
 export const useAssetHistory = (aid: number | undefined): AsyncState<ApiAssetHistory> & { refetch: () => void } =>
   usePolling(

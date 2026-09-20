@@ -61,7 +61,8 @@
     "typescript": "~5.3.3",
     "webpack": "^5.104.1",
     "webpack-cli": "^6.0.1",
-    "webpack-dev-server": "^5.2.5"
+    "webpack-dev-server": "^5.2.5",
+    "webpack-merge": "^6.0.1"
   },
   "//resolutions": "Advisory fixes for transitives their parents pin below the patched version. All build-time only — none of these reach the shipped bundle.",
   "resolutions": {
