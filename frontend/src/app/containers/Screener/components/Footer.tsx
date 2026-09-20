@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { styled } from '@linaria/react';
 import { api } from '../api/client';
+import { usePolled } from '../hooks';
 
 interface HealthResp {
   status: string;
@@ -105,36 +106,9 @@ const BadgeDot = styled.span`
 `;
 
 const IndexerBadge: React.FC = () => {
-  const [health, setHealth] = useState<HealthResp | null>(null);
-  const [errored, setErrored] = useState(false);
+  const { data: health, error } = usePolled<HealthResp>(() => api.health(), [], 30_000);
 
-  useEffect(() => {
-    let cancelled = false;
-    const fetchHealth = (): void => {
-      api
-        .health()
-        .then((h) => {
-          if (!cancelled) {
-            setHealth(h as HealthResp);
-            setErrored(false);
-          }
-        })
-        .catch(() => {
-          if (!cancelled) setErrored(true);
-        });
-    };
-    fetchHealth();
-    const t = setInterval(() => {
-      if (document.hidden) return;
-      fetchHealth();
-    }, 30_000);
-    return () => {
-      cancelled = true;
-      clearInterval(t);
-    };
-  }, []);
-
-  if (errored && !health) {
+  if (error !== null && !health) {
     return (
       <Badge tone="err">
         <BadgeDot />

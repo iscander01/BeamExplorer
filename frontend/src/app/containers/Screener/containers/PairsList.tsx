@@ -363,6 +363,17 @@ const PairRow = React.memo(({ p, idx, fav, onOpen, onToggleFav }: PairRowProps) 
   );
 });
 
+function sortValue(p: ApiPair, key: SortKey): number {
+  switch (key) {
+    case 'tvl_usd': return p.tvl_usd ?? -Infinity;
+    case 'volume_24h_usd': return p.volume_24h_usd ?? -Infinity;
+    case 'price_change_24h': return p.price_change_24h ?? -Infinity;
+    case 'trades_24h': return p.trades_24h;
+    case 'aid2': return p.aid2;
+    default: return -Infinity;
+  }
+}
+
 export const PairsList: React.FC = () => {
   const navigate = useNavigate();
   const [sortBy, setSortBy] = useState<SortKey>('tvl_usd');
@@ -400,18 +411,19 @@ export const PairsList: React.FC = () => {
   }, [inWallet, filter]);
 
   const stats = useStats();
+  // One fixed query per search term: the whole grouped catalogue comes back
+  // (500 == the backend's grouped SQL window), so every column sort is a
+  // local re-order of the same payload rather than a refetch.
   const { data, loading, error } = usePairs(
     useMemo(
       () => ({
-        sort_by: sortBy,
-        order,
-        // 500 == the backend's grouped SQL window, so this pulls every pair —
-        // needed for EMPTY (zero-TVL pairs sort to the bottom) to be complete.
+        sort_by: 'tvl_usd' as const,
+        order: 'desc' as const,
         limit: 500,
         group: 'pair' as const,
         ...(debouncedSearch ? { search: debouncedSearch } : {}),
       }),
-      [sortBy, order, debouncedSearch],
+      [debouncedSearch],
     ),
   );
 
@@ -424,7 +436,13 @@ export const PairsList: React.FC = () => {
     }
   };
 
-  const pairs: ApiPair[] = data?.pairs ?? [];
+  const pairs = useMemo<ApiPair[]>(() => {
+    const sign = order === 'asc' ? 1 : -1;
+    // Nulls sort last in either direction, like the API's own ordering.
+    return [...(data?.pairs ?? [])].sort(
+      (a, b) => (sortValue(a, sortBy) - sortValue(b, sortBy)) * sign || a.aid2 - b.aid2 || a.aid1 - b.aid1,
+    );
+  }, [data, sortBy, order]);
 
   const filtered = useMemo(() => {
     switch (filter) {

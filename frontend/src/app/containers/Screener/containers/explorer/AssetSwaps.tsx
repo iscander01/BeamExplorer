@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { styled } from '@linaria/react';
 import AssetsSwapGlyph from '@app/shared/icons/icon-assets-swap.svg';
 import AssetIcon from '@app/shared/components/AssetsIcon';
@@ -31,7 +31,8 @@ import {
 } from './shared';
 import { api } from '../../api/client';
 import { compact, fmtDuration, fromGroths } from '../../components/format';
-import type { ApiAssetSwapOffer, ApiAssetsList, ApiAsset } from '../../api/types';
+import type { ApiAssetSwapOffer, ApiAssetListEntry } from '../../api/types';
+import { useSharedAssetIndex } from '../../assetColors';
 
 const AssetCell = styled.span`
   display: inline-flex;
@@ -60,7 +61,7 @@ const CellIcon = styled(AssetIcon)`
 
 type FilterTab = 'open' | 'all';
 
-function decimalsFor(asset: ApiAsset | undefined): number {
+function decimalsFor(asset: ApiAssetListEntry | undefined): number {
   // Heuristic: BEAM and most BEAM-issued tokens are 8-decimals. The /api/asset
   // endpoint doesn't currently return decimals here (different shape), so we
   // hard-code 8. Refine later if asset metadata gets surfaced via /api/asset-swaps.
@@ -85,36 +86,24 @@ function timeLeft(iso: string): string {
 export const AssetSwaps: React.FC = () => {
   const [tab, setTab] = useState<FilterTab>('open');
   const [offers, setOffers] = useState<ApiAssetSwapOffer[] | null>(null);
-  const [assets, setAssets] = useState<ApiAssetsList | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // aid → label/decimals/colour from the app-wide catalogue poll.
+  const assetIndex = useSharedAssetIndex();
 
   const refresh = useCallback(async () => {
     try {
-      const [a, list] = await Promise.all([
-        api.assetSwaps(tab === 'all' ? { include: 'all' } : {}),
-        // Load the asset catalogue once so the table can resolve aid → label.
-        assets === null ? api.assets() : Promise.resolve(assets),
-      ]);
+      const a = await api.assetSwaps(tab === 'all' ? { include: 'all' } : {});
       setOffers(a.offers);
-      if (assets === null) setAssets(list);
       setErr(null);
     } catch (e) {
       // wallet-api may be unreachable / disabled in this deployment.
       setErr(e instanceof Error ? e.message : String(e));
     }
-  }, [tab, assets]);
+  }, [tab]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
-
-  const assetIndex = useMemo(() => {
-    const m = new Map<number, ApiAsset>();
-    if (assets) {
-      for (const a of assets.assets) m.set(a.aid, a as unknown as ApiAsset);
-    }
-    return m;
-  }, [assets]);
 
   function labelForAid(aid: number, fallback: string | null): string | null {
     const a = assetIndex.get(aid);

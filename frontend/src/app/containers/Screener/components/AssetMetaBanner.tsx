@@ -3,6 +3,7 @@ import { styled } from '@linaria/react';
 import AssetIcon, { normalizeOptColor } from '@app/shared/components/AssetsIcon';
 import { AssetLabel } from '@app/shared/components/AssetLabel';
 import { useAsset, useAssetHistory, useStats } from '../hooks';
+import { useSharedAssetIndex } from '../assetColors';
 import type { ApiAsset, ApiAssetHistoryItem } from '../api/types';
 import { IconsPair } from './IconsPair';
 import { fmtNum } from './format';
@@ -215,15 +216,18 @@ interface Props {
 export const AssetMetaBanner: React.FC<Props> = ({ aid1, aid2, sym1, sym2 }) => {
   const [open, setOpen] = useState(false);
 
-  const { data: asset1 } = useAsset(aid1);
-  const { data: asset2 } = useAsset(aid2);
+  // The collapsed bar only needs names, which the app-wide catalogue already
+  // holds; the per-asset detail and history requests wait for the first open.
+  const catalogue = useSharedAssetIndex();
+  const { data: asset1 } = useAsset(open ? aid1 : undefined);
+  const { data: asset2 } = useAsset(open ? aid2 : undefined);
   // BEAM (aid 0) has no /history endpoint — skip it.
-  const { data: hist1 } = useAssetHistory(aid1 > 0 ? aid1 : undefined);
-  const { data: hist2 } = useAssetHistory(aid2 > 0 ? aid2 : undefined);
+  const { data: hist1 } = useAssetHistory(open && aid1 > 0 ? aid1 : undefined);
+  const { data: hist2 } = useAssetHistory(open && aid2 > 0 ? aid2 : undefined);
   const { data: stats } = useStats();
 
-  const name1 = asset1?.name ?? sym1;
-  const name2 = asset2?.name ?? sym2;
+  const name1 = asset1?.name ?? catalogue.get(aid1)?.name ?? sym1;
+  const name2 = asset2?.name ?? catalogue.get(aid2)?.name ?? sym2;
 
   // BEAM is mined from genesis and changes every block, so it has no history
   // rows: its "since" is block 1 and its "last change" is the chain tip.

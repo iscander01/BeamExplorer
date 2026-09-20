@@ -313,6 +313,8 @@ interface TieredSeries {
   grid: FetchState<ApiChartSeries>;
   /** Tier matching the expanded modal's timeframe. */
   modal: FetchState<ApiChartSeries>;
+  /** The daily tier itself, for derived all-time series. */
+  daily: FetchState<ApiChartSeries>;
 }
 
 function useTiered(
@@ -327,6 +329,7 @@ function useTiered(
   return {
     grid: gridRes === '1h' ? hourly : daily,
     modal: modalRes === '1h' ? hourly : daily,
+    daily,
   };
 }
 
@@ -1322,8 +1325,8 @@ export const NetworkCharts: React.FC = () => {
 
   // DEX volume (total) is an all-time cumulative — it can only come from the
   // daily tier (the hourly tier is a bounded trailing-24h window). Derive its
-  // running sum from a dedicated daily fetch, independent of the active tier.
-  const dexVolumeDaily = useOneShot<ApiChartSeries>(() => api.charts.dexVolume(), onDefi);
+  // running sum from that tier, independent of the active grid/modal tier.
+  const dexVolumeDaily = dexVolume.daily;
   const dexVolumeCumulative = useMemo<FetchState<ApiChartSeries>>(() => {
     if (!dexVolumeDaily.data) {
       return { data: null, loading: dexVolumeDaily.loading, error: dexVolumeDaily.error };
@@ -1544,7 +1547,7 @@ export const NetworkCharts: React.FC = () => {
   const bridgeTvlByAsset = useKeyedSeries<ApiKeyedSeriesBody>(
     () => api.charts.bridgeTvlByAsset({ res: tvlByAssetRes, ...fullWindow }),
     `bridgeTvlByAsset:${tvlByAssetRes}`,
-    true,
+    onDefi,
   );
   const transfersSplitRes = keyedRes('bridgeTransfers');
   const bridgeTransfersSplit = useKeyedSeries<ApiKeyedSeriesBody>(
@@ -1553,7 +1556,7 @@ export const NetworkCharts: React.FC = () => {
         ? api.charts.bridgeTransfersByDirection({ res: transfersSplitRes, ...fullWindow })
         : api.charts.bridgeTransfersByBridge({ res: transfersSplitRes, ...fullWindow }),
     `bridgeTransfers:${transfersSplit}:${transfersSplitRes}`,
-    transfersSplit !== 'none',
+    onDefi && transfersSplit !== 'none',
   );
 
   // Ordered so each "… / day" chart sits immediately before its "… (total)"
