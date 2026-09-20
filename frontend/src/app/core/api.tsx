@@ -1,7 +1,6 @@
 import connector from '@core/connector';
 import { IAddLiquidity, ICreatePool, ITrade, IWithdraw } from '@core/types';
 import { CID } from '@app/shared/constants';
-import { ShaderRuntimeConfig } from '@app/core/shaderRegistry';
 
 function isWalletLockedError(error: unknown): boolean {
   return error instanceof Error && error.message === 'Wallet is locked';
@@ -35,14 +34,6 @@ function resolveCallConfig(config?: ContractCallConfig, fallbackCid: string = CI
   return {
     cid: config?.cid || fallbackCid,
     contractBytes: config?.contractBytes || null,
-  };
-}
-
-export function toContractCallConfig(shader: ShaderRuntimeConfig | null | undefined): ContractCallConfig | undefined {
-  if (!shader) return undefined;
-  return {
-    cid: shader.cid,
-    contractBytes: shader.contractBytes,
   };
 }
 

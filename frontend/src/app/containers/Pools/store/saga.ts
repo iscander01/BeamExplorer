@@ -5,11 +5,9 @@ import { parseMetadata } from '@core/appUtils';
 import * as mainActions from '@app/containers/Pools/store/actions';
 import { toast } from 'react-toastify';
 import { actions as Shared } from '@app/shared/store/index';
-import { actions } from '.';
 
-export function* loadParamsSaga(action: ReturnType<typeof actions.loadAppParams.request>): Generator {
+export function* loadParamsSaga(): Generator {
   try {
-    yield put(mainActions.setShaderRuntimeMap(action.payload));
     let assetsList: IAsset[] = [];
     try {
       assetsList = (yield call(LoadAssetsList)) as IAsset[];

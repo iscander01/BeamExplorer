@@ -115,13 +115,16 @@ css`
       overscroll-behavior: none;
     }
 
+    /* No overflow rule on body: with html's overflow-x set, a body overflow
+       would make body its own scroll container of viewport height instead of
+       letting the document scroll (window.scrollTo, sticky, IntersectionObserver
+       all target the viewport). */
     body {
       margin: 0;
       padding: 0;
-      height: 100%;
+      min-height: 100%;
       width: 100%;
       min-width: 0;
-      overflow-x: hidden;
       overscroll-behavior: none;
       touch-action: pan-y pinch-zoom;
       font-family: var(--font-sans);
@@ -146,11 +149,21 @@ css`
 
     #root {
       display: block;
-      height: 100%;
       min-height: 100%;
       width: 100%;
       max-width: 100%;
-      overflow-x: hidden;
+    }
+
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      border-radius: 3px;
+      background-color: rgba(255, 255, 255, 0.2);
     }
 
     p {

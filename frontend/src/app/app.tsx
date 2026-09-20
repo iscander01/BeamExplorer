@@ -1,14 +1,11 @@
-import React, { useEffect, useRef } from 'react';
-import { css } from '@linaria/core';
+import React, { useEffect } from 'react';
 
-import { actions as sharedActions, selectors as sharedSelectors } from '@app/shared/store';
 import 'react-toastify/dist/ReactToastify.css';
 
-import { Navigate, useLocation, useNavigate, useRoutes } from 'react-router-dom';
-import { useDispatch, useSelector } from 'react-redux';
+import { Navigate, useLocation, useRoutes } from 'react-router-dom';
+import { useSelector } from 'react-redux';
 
 import { ToastContainer } from 'react-toastify';
-import { Scrollbars } from 'react-custom-scrollbars';
 
 import './styles';
 // Landing surfaces plus the thin layout shells stay in the entry chunk; every
@@ -90,18 +87,6 @@ const DaoProposal = React.lazy(() =>
   import('@app/containers/Screener/containers/explorer/dao/DaoProposal').then((m) => ({ default: m.DaoProposal })),
 );
 
-const trackStyle = css`
-  z-index: 999;
-  border-radius: 3px;
-  background-color: rgba(255, 255, 255, 0.2);
-`;
-
-// react-custom-scrollbars ships no types; just the instance methods we call.
-interface ScrollbarsHandle {
-  scrollToTop(): void;
-  update(): void;
-}
-
 const routes = [
   { path: '*', element: <Navigate to={ROUTES.NAV.DEX} replace /> },
   { path: ROUTES.NAV.DEX, element: <PairsList /> },
@@ -142,35 +127,16 @@ const routes = [
 ];
 
 const App = () => {
-  const dispatch = useDispatch();
   const content = useRoutes(routes);
-  const navigate = useNavigate();
-  const navigateURL = useSelector(sharedSelectors.selectRouterLink());
   const isLoaded = useSelector(selectIsLoaded());
   const isWeb = BeamDappConnector.isWeb();
   const { pathname } = useLocation();
-  const scrollbarsRef = useRef<ScrollbarsHandle | null>(null);
-  const scrollContentRef = useRef<HTMLDivElement | null>(null);
 
-  // Land every route at the top. The Scrollbars view keeps its scrollTop while
-  // the route content underneath it swaps, so a scrolled page otherwise leaks
-  // a (clamped) scroll offset into the next page — which entry path you came
-  // from decided whether a page arrived scrolled and with a scrollbar.
+  // Land every route at the top: the document keeps its scroll offset while
+  // the route content underneath it swaps.
   useEffect(() => {
-    scrollbarsRef.current?.scrollToTop();
+    window.scrollTo(0, 0);
   }, [pathname]);
-
-  // Scrollbars re-measures only on its own re-render, window resize, or a
-  // scroll event. Route data loading in (the page growing several-fold) is
-  // none of those, so the track visibility and thumb size go stale until the
-  // user happens to scroll. Watch the content's height instead.
-  // ResizeObserver is Chrome 64+, available in the wallet's Chrome 83.
-  useEffect(() => {
-    if (typeof ResizeObserver !== 'function' || !scrollContentRef.current) return undefined;
-    const observer = new ResizeObserver(() => scrollbarsRef.current?.update());
-    observer.observe(scrollContentRef.current);
-    return () => observer.disconnect();
-  }, [isLoaded]);
 
   useEffect(() => {
     // Activates the host-specific shell rules in styles.ts: `body.web` /
@@ -186,54 +152,25 @@ const App = () => {
     };
   }, [isWeb]);
 
-  useEffect(() => {
-    if (navigateURL) {
-      navigate(navigateURL);
-      dispatch(sharedActions.navigate(''));
-    }
-  }, [navigateURL, dispatch, navigate]);
-
   return (
     <>
       {isLoaded ? (
-        <Scrollbars
-          ref={scrollbarsRef}
-          style={{ width: '100%', height: '100%' }}
-          hideTracksWhenNotNeeded
-          renderThumbVertical={(props) => <div {...props} className={trackStyle} />}
-          renderView={({ style, ...viewProps }) => (
-            <div
-              {...viewProps}
-              style={{
-                ...style,
-                overflowX: 'hidden',
-                overflowY: 'scroll',
-                WebkitOverflowScrolling: 'touch',
-                overscrollBehavior: 'none',
-              }}
-            />
-          )}
-        >
-          {/* Single child observed by the ResizeObserver above: its height is
-              the full content height, so any page growing/shrinking re-syncs
-              the scrollbar. */}
-          <div ref={scrollContentRef}>
-            <TopNav />
-            <AssetColorsProvider>
-              <ErrorBoundary>
-                <React.Suspense
-                  fallback={
-                    <div style={{ textAlign: 'center', padding: '60px 20px', color: 'rgba(255, 255, 255, 0.5)' }}>
-                      Loading…
-                    </div>
-                  }
-                >
-                  {content}
-                </React.Suspense>
-              </ErrorBoundary>
-            </AssetColorsProvider>
-            <Footer />
-          </div>
+        <>
+          <TopNav />
+          <AssetColorsProvider>
+            <ErrorBoundary>
+              <React.Suspense
+                fallback={
+                  <div style={{ textAlign: 'center', padding: '60px 20px', color: 'rgba(255, 255, 255, 0.5)' }}>
+                    Loading…
+                  </div>
+                }
+              >
+                {content}
+              </React.Suspense>
+            </ErrorBoundary>
+          </AssetColorsProvider>
+          <Footer />
           <ToastContainer
             position="bottom-right"
             autoClose={3000}
@@ -255,7 +192,7 @@ const App = () => {
               borderRadius: '10px',
             }}
           />
-        </Scrollbars>
+        </>
       ) : (
         <Loader />
       )}
