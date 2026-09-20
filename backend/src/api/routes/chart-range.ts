@@ -454,9 +454,6 @@ export async function explorerRangeSeries(col: string, isDelta: boolean, res: Ti
 
 type Kind = 'level' | 'rate' | 'explorer' | 'daily-only' | 'multi';
 const FULL: Res[] = ['1d', '1h', '1m'];
-// For charts that also register `monthSeries` — the ladder is the single source
-// of truth for whether '1M' is offered (see serveRange's '1M' branch).
-export const FULL_M: Res[] = ['1d', '1h', '1m', '1M'];
 const DAILY: Res[] = ['1d'];
 // Bridge series only ever bucket by day or whole-calendar-month — there is no
 // sub-daily bridge_messages granularity to offer, so '1h'/'1m' are absent.
@@ -522,14 +519,10 @@ export interface RangeMetaEntry {
   col?: string;
   isDelta?: boolean;
   ladder: Res[];
-  // Whole-history fetcher for the '1M' rung (see serveRange). Requires '1M' in
-  // `ladder` too — omitting either keeps falling back to the ladder's coarsest
-  // tiled resolution.
-  monthSeries?: (name: string) => Promise<RangePoint[]>;
-  // Whole-history fetcher for 'multi' kind charts — bypasses tiling like monthSeries.
+  // Whole-history fetcher for 'multi' kind charts — bypasses tiling.
   multiSeries?: (name: string, res: Res, fromSec: number, toSec: number) => Promise<MultiSeriesGroup[]>;
-  // Whole-history fetcher covering every rung of `ladder` at once (not just
-  // '1M' like monthSeries) — for charts with no SQL tile builder at all, so
+  // Whole-history fetcher covering every rung of `ladder` at once — for
+  // charts with no SQL tile builder at all, so
   // `fetchTile`'s [] fallback is never reached for any requested res.
   wholeSeries?: (name: string, res: Res) => Promise<RangePoint[]>;
 }
@@ -558,8 +551,8 @@ export const RANGE_META: Record<string, RangeMetaEntry> = {
   // daily-only: no finer tier
   'beam-vol': { kind: 'daily-only', ladder: DAILY }, 'dex-vol': { kind: 'daily-only', ladder: DAILY },
   blackhole: { kind: 'daily-only', ladder: DAILY },
-  // Bridge multi-series: split per direction/bridge/asset, computed whole like
-  // monthSeries rather than tiled — the source tables are small.
+  // Bridge multi-series: split per direction/bridge/asset, computed whole
+  // rather than tiled — the source tables are small.
   'bridge-transfers-by-direction': { kind: 'multi', ladder: BRIDGE_LADDER, multiSeries: bridgeMultiSeries },
   'bridge-transfers-by-bridge': { kind: 'multi', ladder: BRIDGE_LADDER, multiSeries: bridgeMultiSeries },
   'bridge-tvl-by-asset': { kind: 'multi', ladder: BRIDGE_LADDER, multiSeries: bridgeMultiSeries },
@@ -665,30 +658,10 @@ export async function serveRange(name: string, res: Res, fromSec: number, toSec:
     return { body, etag: etagOf(body), immutable: false };
   }
 
-  // A month has no fixed width, so it cannot ride the tile grid below. The month
-  // tier is small enough (tens of buckets) to compute whole and slice, which is
-  // what every '1M' request does — charts that never registered '1M' on their
-  // ladder, or never registered a fetcher, just fall through to the normal
-  // ladder resolution instead (ladder is the single source of truth here).
-  if (res === '1M' && meta.ladder.includes('1M') && meta.monthSeries) {
-    const monthKey = `${name}:1M:full`;
-    const cachedMonth = rangeCache.get(monthKey);
-    const all = cachedMonth
-      ? (cachedMonth.body as RangePoint[])
-      : await rangeCache.inflight(monthKey, async () => {
-        const pts = await meta.monthSeries!(name);
-        rangeCache.set(monthKey, pts, false);
-        return pts;
-      });
-    const series = all.filter((p) => p.ts >= fromSec && p.ts < toSec);
-    const body: RangeBody = { kind: 'single', res: '1M', series };
-    return { body, etag: etagOf(body), immutable: false };
-  }
-
   // Ladders are coarsest-first (e.g. ['1d','1h','1m']); fall back to the coarsest
-  // tiled tier when the requested res isn't offered for this chart, or is '1M'
-  // without a registered month fetcher — and coarsen a window too wide for the
-  // requested rung (see resolveTiledRes).
+  // tiled tier when the requested res isn't offered for this chart (a '1M'
+  // request has no tiled rung, so it coarsens too) — and coarsen a window too
+  // wide for the requested rung (see resolveTiledRes).
   const tiledLadder = meta.ladder.filter((r): r is TiledRes => r !== '1M');
   if (tiledLadder.length === 0) throw new Error(`chart ${name}: ladder has no tiled resolution`);
   const effRes = resolveTiledRes(tiledLadder, res, fromSec, toSec);

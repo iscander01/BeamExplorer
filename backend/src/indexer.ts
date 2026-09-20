@@ -1,6 +1,6 @@
 import { config } from './config.js';
 import { logger } from './logger.js';
-import { pool, q, shutdown } from './db.js';
+import { q, shutdown } from './db.js';
 import { getStatus, getContract } from './explorer.js';
 import { extractOracleSnapshot, OracleMedianUnavailable } from './parsers/oracle.js';
 import { primeBlockTs } from './services/blockTimestamps.js';
@@ -689,5 +689,4 @@ loop()
   })
   .finally(async () => {
     await shutdown();
-    void pool; // touch the import so it isn't tree-shaken
   });

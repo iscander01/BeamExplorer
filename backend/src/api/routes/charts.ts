@@ -1,5 +1,4 @@
 import type { FastifyInstance } from 'fastify';
-import { createHash } from 'node:crypto';
 import { q } from '../../db.js';
 import { fetchNetworkSeries, fetchNetworkSeriesHourly, type NetworkSeries, type ChartPoint } from '../../services/networkStats.js';
 import { fetchBlackholeSeries } from '../../services/blackhole.js';
@@ -7,7 +6,7 @@ import { supplyAtHeight } from '../../services/beamEmission.js';
 import { logger } from '../../logger.js';
 import {
   serveRange, RANGE_META, bridgeMultiSeries, bridgeSingleSeries, buildSimpleLevelSql, clampRange,
-  RangeTooWideError, type Res as RangeRes, type SimpleLevelChart,
+  RangeTooWideError, etagOf, type Res as RangeRes, type SimpleLevelChart,
 } from './chart-range.js';
 
 interface SeriesPoint {
@@ -873,10 +872,6 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
-function computeEtag(body: ChartBody): string {
-  return `"${createHash('sha1').update(JSON.stringify(body)).digest('hex')}"`;
-}
-
 type Res = '1h' | '1d';
 function hasHourly(def: ChartDef): boolean {
   return def.hourlySql !== undefined || def.hourlyFetch !== undefined;
@@ -921,7 +916,7 @@ async function refresh(def: ChartDef, res: Res): Promise<ChartBody> {
   });
   try {
     const body = await inflight;
-    cache.set(key, { body, etag: computeEtag(body), refreshedAt: Date.now(), inflight: null });
+    cache.set(key, { body, etag: etagOf(body), refreshedAt: Date.now(), inflight: null });
     return body;
   } catch (err) {
     cache.set(key, {
@@ -1011,7 +1006,7 @@ export async function chartsRoutes(app: FastifyInstance): Promise<void> {
       const body = await getBody(def, res);
       const eff: Res = res === '1h' && !hasHourly(def) ? '1d' : res;
       const entry = cache.get(cacheKey(def.name, eff));
-      const etag = entry?.etag ?? computeEtag(body);
+      const etag = entry?.etag ?? etagOf(body);
 
       void reply.header('cache-control', `public, max-age=${def.maxAgeSec}`);
       void reply.header('etag', etag);
