@@ -217,7 +217,6 @@ const maybeKickDappStoreSync = periodic({
   everyMs: 10 * 60 * 1000,
   enabled: () => Boolean(config.DAPP_STORE_CID && config.WALLET_API_URL),
   run: syncDappStore,
-  onDone: (res) => { if (res) logger.info(res, 'dapp-store synced'); },
 });
 
 // Oracle2 provider/median state, read through `oracle2_app.wasm` in wallet-api.
