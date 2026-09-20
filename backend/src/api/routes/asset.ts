@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { q } from '../../db.js';
 import { BadRequest, NotFound } from '../error.js';
 import { queryInt } from '../query.js';
+import { readBeamUsd } from '../repos/usd.js';
 import { getAssetHistory, getContracts } from '../../explorer.js';
 import type { Row, Table, TypedCell } from '../../explorer.js';
 
@@ -50,13 +51,6 @@ interface AssetPoolRow {
   reserve2: string | null;
   decimals1: number;
   decimals2: number;
-}
-
-async function readBeamUsd(): Promise<number | null> {
-  const { rows } = await q<{ beam_usd: string }>(
-    'SELECT beam_usd::text AS beam_usd FROM oracle_snapshots ORDER BY ts DESC LIMIT 1',
-  );
-  return rows[0] ? Number(rows[0].beam_usd) : null;
 }
 
 interface AssetListRow {
@@ -151,38 +145,40 @@ export async function assetRoutes(app: FastifyInstance): Promise<void> {
       throw BadRequest('BAD_REQUEST', 'aid must be a non-negative integer');
     }
 
-    const { rows } = await q<AssetRow>(
-      `SELECT aid::text, name, short_name, unit_name, description, decimals,
-              is_imposter, emission::text,
-              lock_height::text AS minted_at_height,
-              minter_cid, max_supply::text, color, logo_url, owner_cid, owner_kind, owner_addr
-         FROM assets
-        WHERE aid = $1`,
-      [aid],
-    );
+    // The three reads are independent; the 404 check only needs the first.
+    const [{ rows }, { rows: poolRows }, beamUsd] = await Promise.all([
+      q<AssetRow>(
+        `SELECT aid::text, name, short_name, unit_name, description, decimals,
+                is_imposter, emission::text,
+                lock_height::text AS minted_at_height,
+                minter_cid, max_supply::text, color, logo_url, owner_cid, owner_kind, owner_addr
+           FROM assets
+          WHERE aid = $1`,
+        [aid],
+      ),
+      q<AssetPoolRow>(
+        `SELECT p.pool_id::text, p.kind, p.aid1::text, p.aid2::text,
+                snap.reserve1::text, snap.reserve2::text,
+                a1.decimals AS decimals1, a2.decimals AS decimals2
+           FROM pools p
+           JOIN assets a1 ON a1.aid = p.aid1
+           JOIN assets a2 ON a2.aid = p.aid2
+           LEFT JOIN LATERAL (
+             SELECT reserve1, reserve2
+               FROM pool_state_snapshots s
+              WHERE s.pool_id = p.pool_id
+              ORDER BY s.ts DESC
+              LIMIT 1
+           ) snap ON TRUE
+          WHERE (p.aid1 = $1 OR p.aid2 = $1)
+            AND p.destroyed_at_height IS NULL`,
+        [aid],
+      ),
+      readBeamUsd(),
+    ]);
     if (rows.length === 0) throw NotFound('ASSET_NOT_FOUND', `no asset ${aid}`);
     const asset = rows[0]!;
 
-    const { rows: poolRows } = await q<AssetPoolRow>(
-      `SELECT p.pool_id::text, p.kind, p.aid1::text, p.aid2::text,
-              snap.reserve1::text, snap.reserve2::text,
-              a1.decimals AS decimals1, a2.decimals AS decimals2
-         FROM pools p
-         JOIN assets a1 ON a1.aid = p.aid1
-         JOIN assets a2 ON a2.aid = p.aid2
-         LEFT JOIN LATERAL (
-           SELECT reserve1, reserve2
-             FROM pool_state_snapshots s
-            WHERE s.pool_id = p.pool_id
-            ORDER BY s.ts DESC
-            LIMIT 1
-         ) snap ON TRUE
-        WHERE (p.aid1 = $1 OR p.aid2 = $1)
-          AND p.destroyed_at_height IS NULL`,
-      [aid],
-    );
-
-    const beamUsd = await readBeamUsd();
     const pools = poolRows.map((p) => {
       const a1 = Number(p.aid1);
       const a2 = Number(p.aid2);

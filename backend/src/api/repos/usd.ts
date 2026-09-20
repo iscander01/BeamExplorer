@@ -54,11 +54,16 @@ export async function loadUsdTable(): Promise<UsdTable> {
   }
 }
 
-async function fetchUsdTable(): Promise<UsdTable> {
-  const { rows: oracle } = await q<OracleRow>(
+/** Latest oracle BEAM/USD row, uncached. */
+export async function readBeamUsd(): Promise<number | null> {
+  const { rows } = await q<OracleRow>(
     'SELECT beam_usd::text FROM oracle_snapshots ORDER BY ts DESC LIMIT 1',
   );
-  const beamUsd = oracle[0] ? Number(oracle[0].beam_usd) : null;
+  return rows[0] ? Number(rows[0].beam_usd) : null;
+}
+
+async function fetchUsdTable(): Promise<UsdTable> {
+  const beamUsd = await readBeamUsd();
 
   const perAid = new Map<number, number>();
   // BEAM itself: 1 whole BEAM = beamUsd USD.

@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { q } from '../../db.js';
 import { BadRequest, NotFound } from '../error.js';
-import { resolvePair } from '../repos/pairs.js';
-import { loadUsdTable } from '../repos/usd.js';
+import { resolvePair, readLastIndexedHeight } from '../repos/pairs.js';
+import { loadUsdTable, readBeamUsd } from '../repos/usd.js';
 import { queryBool } from '../query.js';
 
 const Query = z.object({
@@ -51,20 +51,6 @@ interface LpRow {
   ctl_after: string | null;
 }
 
-async function readBeamUsd(): Promise<number | null> {
-  const { rows } = await q<{ beam_usd: string }>(
-    'SELECT beam_usd::text AS beam_usd FROM oracle_snapshots ORDER BY ts DESC LIMIT 1',
-  );
-  return rows[0] ? Number(rows[0].beam_usd) : null;
-}
-
-async function readLastIndexedHeight(): Promise<number> {
-  const { rows } = await q<{ last_indexed_height: string }>(
-    'SELECT last_indexed_height::text AS last_indexed_height FROM cursor WHERE id = 1',
-  );
-  return rows[0] ? Number(rows[0].last_indexed_height) : 0;
-}
-
 export async function tradesRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { id: string } }>('/pairs/:id/trades', async (req, reply) => {
     const resolved = await resolvePair(req.params.id);
@@ -104,30 +90,33 @@ export async function tradesRoutes(app: FastifyInstance): Promise<void> {
       const ctlAfterCol = `(SELECT s.ctl_supply::text FROM pool_state_snapshots s
                               WHERE s.pool_id = t.pool_id AND s.height >= t.height
                               ORDER BY s.height LIMIT 1) AS ctl_after`;
-      const { rows } = useOffset
-        ? await q<LpRow>(
-          `SELECT event_id::text, height::text, block_ts, kind,
-                  amount1::text, amount2::text, amount_ctl::text, confirmed,
-                  ${ctlAfterCol}
-             FROM lp_events t
-            WHERE t.pool_id = ANY($1)
-              ${confirmedFilter}
-            ORDER BY t.block_ts DESC, t.event_id DESC
-            LIMIT $2 OFFSET $3`,
-          [poolIds, limit, offset],
-        )
-        : await q<LpRow>(
-          `SELECT event_id::text, height::text, block_ts, kind,
-                  amount1::text, amount2::text, amount_ctl::text, confirmed,
-                  ${ctlAfterCol}
-             FROM lp_events t
-            WHERE t.pool_id = ANY($1)
-              AND ${cursorWhere('event_id')}
-              ${confirmedFilter}
-            ORDER BY t.block_ts DESC, t.event_id DESC
-            LIMIT ${cursorLimitParam}`,
-          [poolIds, ...cursorParams, limit],
-        );
+      const [{ rows }, total] = await Promise.all([
+        useOffset
+          ? q<LpRow>(
+            `SELECT event_id::text, height::text, block_ts, kind,
+                    amount1::text, amount2::text, amount_ctl::text, confirmed,
+                    ${ctlAfterCol}
+               FROM lp_events t
+              WHERE t.pool_id = ANY($1)
+                ${confirmedFilter}
+              ORDER BY t.block_ts DESC, t.event_id DESC
+              LIMIT $2 OFFSET $3`,
+            [poolIds, limit, offset],
+          )
+          : q<LpRow>(
+            `SELECT event_id::text, height::text, block_ts, kind,
+                    amount1::text, amount2::text, amount_ctl::text, confirmed,
+                    ${ctlAfterCol}
+               FROM lp_events t
+              WHERE t.pool_id = ANY($1)
+                AND ${cursorWhere('event_id')}
+                ${confirmedFilter}
+              ORDER BY t.block_ts DESC, t.event_id DESC
+              LIMIT ${cursorLimitParam}`,
+            [poolIds, ...cursorParams, limit],
+          ),
+        count ? countRows('lp_events', poolIds, include_unconfirmed) : null,
+      ]);
       const trades = rows.map((r) => {
         const ctlAfter = r.ctl_after ? Number(r.ctl_after) : null;
         const amtCtl = Number(r.amount_ctl);
@@ -150,9 +139,6 @@ export async function tradesRoutes(app: FastifyInstance): Promise<void> {
           confirmed: r.confirmed,
         };
       });
-      const total = count
-        ? await countRows('lp_events', poolIds, include_unconfirmed)
-        : null;
       void reply.header('cache-control', 'public, max-age=15');
       return {
         trades,
@@ -165,10 +151,12 @@ export async function tradesRoutes(app: FastifyInstance): Promise<void> {
     }
 
     // lastHeight/beamUsd are only consumed by this (Trade) branch; batch them
-    // with the independent rows query instead of awaiting serially up front.
-    const [lastHeight, beamUsd, { rows }] = await Promise.all([
+    // and the optional total with the independent rows query instead of
+    // awaiting serially.
+    const [lastHeight, beamUsd, total, { rows }] = await Promise.all([
       readLastIndexedHeight(),
       readBeamUsd(),
+      count ? countRows('trades', poolIds, include_unconfirmed) : null,
       useOffset
         ? q<TradeRow>(
           `SELECT t.trade_id::text, t.height::text, t.block_ts,
@@ -246,9 +234,6 @@ export async function tradesRoutes(app: FastifyInstance): Promise<void> {
       };
     });
 
-    const total = count
-      ? await countRows('trades', poolIds, include_unconfirmed)
-      : null;
     void reply.header('cache-control', 'public, max-age=15');
     return {
       trades,

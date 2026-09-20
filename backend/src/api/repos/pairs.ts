@@ -97,7 +97,7 @@ function cacheKey(opts: ListOpts): string | null {
 
 /** Primary-key read on the one-row `cursor` table; the indexer stamps it after
  *  every write, so it doubles as the version of everything derived from one. */
-async function readLastIndexedHeight(): Promise<number> {
+export async function readLastIndexedHeight(): Promise<number> {
   const { rows } = await q<{ h: string }>(
     'SELECT last_indexed_height::text AS h FROM cursor WHERE id = 1',
   );

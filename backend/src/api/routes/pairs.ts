@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { queryBool } from '../query.js';
-import { q } from '../../db.js';
 import { BadRequest, NotFound } from '../error.js';
-import { countPairs, listPairs, resolvePair, type PairRowRaw, type SortKey } from '../repos/pairs.js';
+import {
+  countPairs, listPairs, readLastIndexedHeight, resolvePair, type PairRowRaw, type SortKey,
+} from '../repos/pairs.js';
 import { loadUsdTable, type UsdTable } from '../repos/usd.js';
 import { loadSparklines7d } from '../repos/sparklines.js';
 
@@ -69,13 +70,6 @@ interface ResponsePair {
   /** Present only on grouped (combined-pair) responses: one entry per fee tier,
    *  deepest first. Absent on single-tier responses. */
   tiers?: ResponsePairTier[];
-}
-
-async function readLastIndexedHeight(): Promise<number> {
-  const { rows } = await q<{ last_indexed_height: string }>(
-    'SELECT last_indexed_height::text AS last_indexed_height FROM cursor WHERE id = 1',
-  );
-  return rows[0] ? Number(rows[0].last_indexed_height) : 0;
 }
 
 function toResponse(

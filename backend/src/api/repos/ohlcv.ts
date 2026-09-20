@@ -41,11 +41,6 @@ interface CandleRow {
   trade_count: string;
 }
 
-interface OracleHistoryRow {
-  ts: Date;
-  beam_usd: string;
-}
-
 /**
  * Forward-fill no-trade buckets with flat candles (open=high=low=close=prev
  * close, zero volume). Continuous-aggregate candles only exist for buckets that
@@ -145,13 +140,15 @@ export async function fetchCandles(opts: FetchCandlesOpts): Promise<Candle[]> {
   // oracle snapshot at/before each bucket, resolved in SQL as one indexed
   // seek per bucket (≤ limit rows) instead of pulling the whole snapshot
   // range into Node. The latest snapshot overall is the fallback for buckets
-  // older than our oracle history (e.g. backfilled trades).
+  // older than our oracle history (e.g. backfilled trades); it rides along as
+  // a per-row constant so the fallback costs no second round trip.
   const usdByBucket = new Map<number, number>();
   let fallbackUsd: number | null = null;
   if (denom === 'usd' && usdSide !== 'unsupported' && rows.length > 0) {
     const buckets = rows.map((r) => r.bucket);
-    const { rows: oh } = await q<{ b: Date; beam_usd: string | null }>(
-      `SELECT t.b, o.beam_usd::text
+    const { rows: oh } = await q<{ b: Date; beam_usd: string | null; latest: string | null }>(
+      `SELECT t.b, o.beam_usd::text,
+              (SELECT beam_usd::text FROM oracle_snapshots ORDER BY ts DESC LIMIT 1) AS latest
          FROM unnest($1::timestamptz[]) AS t(b)
          LEFT JOIN LATERAL (
            SELECT beam_usd
@@ -165,11 +162,7 @@ export async function fetchCandles(opts: FetchCandlesOpts): Promise<Candle[]> {
     for (const r of oh) {
       if (r.beam_usd !== null) usdByBucket.set(r.b.getTime(), Number(r.beam_usd));
     }
-
-    const { rows: latest } = await q<OracleHistoryRow>(
-      'SELECT ts, beam_usd::text FROM oracle_snapshots ORDER BY ts DESC LIMIT 1',
-    );
-    if (latest[0]) fallbackUsd = Number(latest[0].beam_usd);
+    if (oh[0]?.latest != null) fallbackUsd = Number(oh[0].latest);
   }
 
   function beamUsdAt(t: Date): number | null {
