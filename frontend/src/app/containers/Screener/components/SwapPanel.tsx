@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { styled } from '@linaria/react';
 import { AssetLabel } from '@app/shared/components/AssetLabel';
 import type { ApiPair, ApiPairTier } from '../api/types';
-import { fmt$, fmtPrice, fmtPriceImpact, toGroths, fromGroths } from './format';
+import { fmt$, fmtPrice, fmtPriceImpact, toGroths, toGrothsStr, fromGroths } from './format';
 import { Box, BoxHeader, Row, Input, TokenBadge, BadgeAssetIcon, InfoRow } from './amountBox';
 import { Btn, actionButtonState } from './modalChrome';
 import { useWallet, invokeTrade } from '../wallet';
@@ -139,7 +139,10 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
   // Tier that the local (constant-product) estimate picked as best — used to
   // route the swap before an authoritative wallet quote arrives.
   const [localBestKind, setLocalBestKind] = useState<0 | 1 | 2 | null>(null);
-  const [confirmedQuote, setConfirmedQuote] = useState<{
+  // The last wallet quote, tagged with the inputs it was made for. Use
+  // `confirmedQuote` below, which is null whenever that tag no longer matches.
+  const [rawQuote, setRawQuote] = useState<{
+    key: string;
     buy: number;
     pay: number;
     kind: 0 | 1 | 2;
@@ -185,6 +188,13 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
     ];
   }, [tiers, pair.kind, pair.reserve1_human, pair.reserve2_human]);
 
+  // A quote only describes the trade it was made for. Once the amount, the
+  // direction, the pair or the routable tiers change it is stale — even before
+  // the debounced re-quote runs, and even if that re-quote fails — so it must
+  // not be displayed as final or used to pick the tier.
+  const quoteKey = `${direction}|${pay.aid}|${receive.aid}|${amountIn}|${candidates.map((c) => c.kind).join(',')}`;
+  const confirmedQuote = rawQuote && rawQuote.key === quoteKey ? rawQuote : null;
+
   const routing = candidates.length > 1;
   // Tier the swap will execute against: the authoritative quote's winner if we
   // have one, else the local estimate's pick, else the only/declared tier.
@@ -199,7 +209,7 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
     const v = parseFloat(amountIn);
     if (!Number.isFinite(v) || v <= 0) {
       setEstimatedOut(null);
-      setConfirmedQuote(null);
+      setRawQuote(null);
       setLocalBestKind(null);
       return;
     }
@@ -221,10 +231,11 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
     if (headless) return undefined;
     const v = parseFloat(amountIn);
     if (!Number.isFinite(v) || v <= 0) {
-      setConfirmedQuote(null);
+      setRawQuote(null);
       return undefined;
     }
     let cancelled = false;
+    const key = quoteKey;
     const t = setTimeout(async () => {
       setQuoting(true);
       try {
@@ -273,7 +284,8 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
         if (cancelled) return;
         const best = quotes.reduce((a, b) => (b.buy > a.buy ? b : a));
         if (best.buy > 0) {
-          setConfirmedQuote({
+          setRawQuote({
+            key,
             buy: best.buy,
             pay: best.pay,
             kind: best.kind,
@@ -284,7 +296,7 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn('[swap] quote failed', err);
-        setConfirmedQuote(null);
+        setRawQuote(null);
       } finally {
         if (!cancelled) setQuoting(false);
       }
@@ -293,38 +305,42 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
       cancelled = true;
       clearTimeout(t);
     };
-  }, [amountIn, headless, direction, candidates, pay.aid, pay.decimals, receive.aid]);
+  }, [amountIn, headless, direction, candidates, pay.aid, pay.decimals, receive.aid, quoteKey]);
 
   const flip = useCallback(() => {
     setDirection((d) => (d === 'buy_aid2' ? 'buy_aid1' : 'buy_aid2'));
     setAmountIn(estimatedOut !== null ? estimatedOut.toFixed(6) : '');
-    setConfirmedQuote(null);
+    setRawQuote(null);
     setFeedback(null);
   }, [estimatedOut]);
 
   const onSwap = useCallback(async () => {
     const v = parseFloat(amountIn);
     if (!Number.isFinite(v) || v <= 0) return;
+    // Always trade in pay mode with the exact typed amount (string math, no
+    // float loss). With val1_buy set, pool_trade ignores val2_pay and charges
+    // whatever that output costs at build time; with val1_buy = 0 it finds the
+    // best output for which pay <= val2_pay, so "You pay" is a hard cap.
+    const val2_pay = toGrothsStr(amountIn, pay.decimals);
+    if (val2_pay === '0') return;
 
     setExecuting(true);
     setFeedback(null);
     try {
       const callAid1 = receive.aid;
       const callAid2 = pay.aid;
-      const val2_pay = confirmedQuote ? confirmedQuote.pay : toGroths(v, pay.decimals);
-      const val1_buy = confirmedQuote ? confirmedQuote.buy : 0;
       const res = await invokeTrade({
         aid1: callAid1,
         aid2: callAid2,
         kind: execKind,
-        val1_buy,
+        val1_buy: 0,
         val2_pay,
         bPredictOnly: 0,
       });
       if (res?.txid) {
         setFeedback({ kind: 'success', text: 'Swap submitted' });
         setAmountIn('');
-        setConfirmedQuote(null);
+        setRawQuote(null);
       } else {
         setFeedback({ kind: 'error', text: 'Swap cancelled' });
       }
@@ -336,7 +352,7 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
       // Auto-clear after a few seconds.
       setTimeout(() => setFeedback(null), 4000);
     }
-  }, [amountIn, confirmedQuote, execKind, pay.aid, pay.decimals, receive.aid]);
+  }, [amountIn, execKind, pay.aid, pay.decimals, receive.aid]);
 
   // Headless → ask the wallet to connect on demand. The button only requests a
   // connection when the user actually wants to trade; browsing needs no wallet.

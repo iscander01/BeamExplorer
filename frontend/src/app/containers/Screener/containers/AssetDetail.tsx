@@ -193,11 +193,13 @@ const Table = styled(ScreenerTable)`
 export const AssetDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const aid = id !== undefined ? Number(id) : undefined;
+  // Asset ids are non-negative integers; anything else can't exist, so don't
+  // request `/assets/NaN`.
+  const aid = id !== undefined && /^\d+$/.test(id) ? Number(id) : undefined;
 
   const [tab, setTab] = useState<'pools' | 'history' | 'distribution'>('pools');
 
-  const { data: asset, loading: assetLoading } = useAsset(aid);
+  const { data: asset, loading: assetLoading, error: assetError } = useAsset(aid);
   // Always fetch the supply history when an aid is set — the chart needs it
   // even on the "pools" tab. BEAM (aid 0) has no /history endpoint, skip.
   const { data: history } = useAssetHistory(aid !== undefined && aid > 0 ? aid : undefined);
@@ -221,6 +223,22 @@ export const AssetDetail: React.FC = () => {
       .sort((a, b) => a.ts - b.ts);
   }, [history, asset]);
 
+  // Malformed id, a 404 or a failed first load: say so instead of spinning.
+  // Polling continues, so a transient failure recovers on its own.
+  if (!asset && (aid === undefined || assetError)) {
+    return (
+      <Page>
+        <TopBar>
+          <BackButton to="/assets" label="Back to Assets" />
+        </TopBar>
+        <CenteredNote>
+          {aid === undefined
+            ? `“${id ?? ''}” is not a valid asset id.`
+            : `Couldn't load asset #${aid}. It may not exist.`}
+        </CenteredNote>
+      </Page>
+    );
+  }
   if (assetLoading || !asset) {
     return (
       <Page>

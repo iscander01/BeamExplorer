@@ -242,22 +242,29 @@ interface FetchState<T> {
 function useOneShot<T>(fetcher: () => Promise<T>, enabled = true): FetchState<T> {
   const [state, setState] = useState<FetchState<T>>({ data: null, loading: enabled, error: null });
   const started = useRef(false);
+  const mounted = useRef(true);
+  useEffect(
+    () => () => {
+      mounted.current = false;
+    },
+    [],
+  );
   useEffect(() => {
-    if (!enabled || started.current) return undefined;
+    if (!enabled || started.current) return;
     started.current = true;
-    let cancelled = false;
     setState((s) => ({ ...s, loading: true }));
+    // The result is kept even if `enabled` flipped false while in flight (tab
+    // or timeframe switched away): it's the same data either way, and since
+    // this fetches only once, dropping it would leave the card loading forever.
+    // Only an unmount discards it.
     fetcher()
       .then((data) => {
-        if (!cancelled) setState({ data, loading: false, error: null });
+        if (mounted.current) setState({ data, loading: false, error: null });
       })
       .catch((err: unknown) => {
-        if (cancelled) return;
+        if (!mounted.current) return;
         setState({ data: null, loading: false, error: err instanceof Error ? err.message : String(err) });
       });
-    return () => {
-      cancelled = true;
-    };
     // Fetch once, on mount or the first time `enabled` flips true. Fetcher
     // identity intentionally ignored (endpoints are server-cached).
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -1,37 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { styled } from '@linaria/react';
 import { EXPLORER_API } from '@app/shared/constants';
-import { fmtAmount } from './supplyMath';
+import { EMIT_BASE, blockRewardAtHeight, fmtAmount, getEmissionEx } from './supplyMath';
 import { PageNarrow, Card, H2, Label, Value, Muted, theme } from './shared';
 import { usePolled } from '../../hooks';
 
-// Mainnet emission schedule — mirrors beam/core/block_crypt.cpp Rules::Emission.
-const DROP0 = 1440 * 365; // blocks until first halving
-const DROP1 = 1440 * 365 * 4; // blocks between subsequent halvings
-const EMIT_BASE = 80; // base subsidy
 const POLL_MS = 45_000;
-
-interface Emission {
-  rate: number;
-  hEnd: number;
-}
-
-function getEmissionEx(h: number, base: number): Emission {
-  const b0 = Math.floor(base);
-  if (!b0) return { rate: 0, hEnd: 0 };
-  if (h < 1) return { rate: 0, hEnd: 0 };
-  const hp = h - 1;
-  if (hp < DROP0) return { rate: b0, hEnd: DROP0 + 1 };
-  const n = 1 + Math.floor((hp - DROP0) / DROP1);
-  if (n >= 53) return { rate: 0, hEnd: 9007199254740991 };
-  const hEnd = DROP0 + n * DROP1 + 1;
-  let b = b0;
-  if (n >= 2) b += b >> 2;
-  // eslint-disable-next-line no-bitwise
-  return { rate: b >> n, hEnd };
-}
-
-const blockRewardAtHeight = (h: number): number => (h < 1 ? 0 : getEmissionEx(h, EMIT_BASE).rate);
 
 function nextHalvingHeight(tip: number): number | null {
   const hQuery = Math.max(1, Math.floor(Number(tip)));

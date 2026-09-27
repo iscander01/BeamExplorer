@@ -165,7 +165,9 @@ export interface TradeArgs {
   aid2: number;
   kind: 0 | 1 | 2;
   val1_buy: number; // groths of aid1 the user wants to receive (0 if direction is reversed)
-  val2_pay: number; // groths of aid2 the user is willing to pay
+  // Groths of aid2 the user is willing to pay; an exact string (format.toGrothsStr)
+  // for real trades so large amounts keep full precision.
+  val2_pay: number | string;
   bPredictOnly: 0 | 1;
 }
 

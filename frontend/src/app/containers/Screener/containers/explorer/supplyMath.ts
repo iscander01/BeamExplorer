@@ -177,18 +177,24 @@ export interface Emission {
   hEnd: number;
 }
 
+const GROTH = 100_000_000;
+
+/** Block subsidy (in BEAM) at height `h`, and the first height at the next rate.
+ *  Mirrors beam/core Rules::get_EmissionEx. The node shifts a *groth* amount
+ *  (base = 80 BEAM = 8e9 groth), so the maths runs in integer groths: shifting
+ *  whole BEAM would floor 12.5 to 12 from the third period on. Division stands
+ *  in for `>>` because 1e10 groth overflows JS's 32-bit shift. */
 export function getEmissionEx(h: number, base: number): Emission {
-  const b0 = Math.floor(base);
+  const b0 = Math.floor(base) * GROTH;
   if (!b0 || h < 1) return { rate: 0, hEnd: 0 };
   const hp = h - 1;
-  if (hp < DROP0) return { rate: b0, hEnd: DROP0 + 1 };
+  if (hp < DROP0) return { rate: b0 / GROTH, hEnd: DROP0 + 1 };
   const n = 1 + Math.floor((hp - DROP0) / DROP1);
   if (n >= 53) return { rate: 0, hEnd: 9007199254740991 };
   const hEnd = DROP0 + n * DROP1 + 1;
   let b = b0;
-  if (n >= 2) b += b >> 2;
-  // eslint-disable-next-line no-bitwise
-  return { rate: b >> n, hEnd };
+  if (n >= 2) b += Math.floor(b / 4);
+  return { rate: Math.floor(b / 2 ** n) / GROTH, hEnd };
 }
 
 export function getEmissionSumRange(hrMin: number, hrMax: number, base: number): number {

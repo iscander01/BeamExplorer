@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 
 import 'react-toastify/dist/ReactToastify.css';
 
-import { Navigate, useLocation, useRoutes } from 'react-router-dom';
+import { Navigate, useLocation, useParams, useRoutes } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 
 import { ToastContainer } from 'react-toastify';
@@ -89,13 +89,21 @@ const DaoProposal = React.lazy(() =>
   import('@app/containers/Screener/containers/explorer/dao/DaoProposal').then((m) => ({ default: m.DaoProposal })),
 );
 
+// Detail pages stay mounted when only `:id` changes, and their fetch hooks keep
+// the previous item's data until the new one lands. Remounting per id gives
+// each item a fresh page: no old data under a new URL, no leftover inputs.
+const KeyedById: React.FC<{ page: React.ComponentType }> = ({ page: Page }) => {
+  const { id } = useParams<{ id: string }>();
+  return <Page key={id} />;
+};
+
 const routes = [
   { path: '*', element: <Navigate to={ROUTES.NAV.EXPLORER_CHARTS} replace /> },
   { path: ROUTES.NAV.DEX, element: <PairsList /> },
   { path: ROUTES.NAV.LIQUIDITY, element: <LiquidityPosition /> },
-  { path: ROUTES.NAV.PAIR_DETAIL, element: <PairDetail /> },
+  { path: ROUTES.NAV.PAIR_DETAIL, element: <KeyedById page={PairDetail} /> },
   { path: ROUTES.NAV.ASSETS, element: <AssetsList /> },
-  { path: ROUTES.NAV.ASSET_INFO, element: <AssetDetail /> },
+  { path: ROUTES.NAV.ASSET_INFO, element: <KeyedById page={AssetDetail} /> },
   { path: ROUTES.NAV.ATOMIC_SWAPS, element: <AtomicSwaps /> },
   { path: ROUTES.NAV.ASSET_SWAPS, element: <AssetSwaps /> },
   { path: ROUTES.NAV.DAPPS, element: <Dapps /> },

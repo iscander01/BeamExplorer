@@ -57,7 +57,7 @@ export interface IAddLiquidity extends ICreatePool {
 }
 export interface ITrade extends ICreatePool {
   val1_buy: number;
-  val2_pay: number;
+  val2_pay: number | string;
   bPredictOnly?: number;
 }
 

@@ -4401,6 +4401,14 @@ export const BeamExplorer: React.FC = () => {
         }
         if (patch.type !== 'assets') next.q = undefined; // owner filter only applies to the assets list
       }
+      // A block is addressed by kernel *or* height, and the node resolves the
+      // kernel first. Moving to a height (Prev/Next, a block link) must drop
+      // the kernel the page was opened with, or it keeps returning that block.
+      // Likewise a plain height link must not inherit a previous Prev/Next adj.
+      if (patch.height !== undefined) {
+        if (!('kernel' in patch)) next.kernel = undefined;
+        if (!('adj' in patch)) next.adj = undefined;
+      }
       setView(next, opts);
     },
     [view, setView],

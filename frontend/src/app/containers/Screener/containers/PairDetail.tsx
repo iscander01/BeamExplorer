@@ -17,6 +17,7 @@ import { useAssetColor } from '../assetColors';
 import { AssetMetaBanner } from '../components/AssetMetaBanner';
 import { LiquidityBanner } from '../components/LiquidityBanner';
 import { Pager } from '../components/Pager';
+import { CenteredNote } from '../components/CenteredNote';
 import { tierFeePct } from '../components/modalChrome';
 import {
   fmt$,
@@ -495,7 +496,7 @@ export const PairDetail: React.FC = () => {
 
   // The URL id is the combined pair (aid1_aid2) by default → this response
   // carries `tiers[]`. A deep-linked tier id (aid1_aid2_kind) has no tiers[].
-  const { data: combined, loading: pairLoading } = usePair(id);
+  const { data: combined, loading: pairLoading, error: pairError } = usePair(id);
   const tiers = combined?.tiers ?? [];
 
   // Reset the tier selection whenever we navigate to a different pair.
@@ -613,6 +614,16 @@ export const PairDetail: React.FC = () => {
   }, [rawCandles, chartFlipped, metric, supplyTimeline, interval]);
   const { items: tradeItems, total: tradesTotal } = usePagedTrades(dataId, tradesPage, TRADES_PAGE_SIZE);
 
+  // A 404 (unknown id) or a failed first load: say so instead of spinning.
+  // Polling continues, so a transient failure recovers on its own.
+  if (!pair && pairError) {
+    return (
+      <Page>
+        <BackButton onClick={() => navigate(ROUTES.NAV.DEX)} label="Back" />
+        <CenteredNote>Couldn&apos;t load pair {id}. It may not exist.</CenteredNote>
+      </Page>
+    );
+  }
   if (pairLoading || !pair) {
     return <Loading label="Loading pair…" />;
   }
