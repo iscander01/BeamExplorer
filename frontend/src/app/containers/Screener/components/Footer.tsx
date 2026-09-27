@@ -244,6 +244,14 @@ export const Footer: React.FC = () => (
               BeamTerminal
             </BottomLink>
           </span>
+          {/* Required by the lightweight-charts licence now that the in-chart
+              TradingView badge is hidden (see chartTheme.ts). */}
+          <span>
+            Charts by{' '}
+            <BottomLink href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">
+              TradingView
+            </BottomLink>
+          </span>
           <IndexerBadge />
         </Meta>
       </Inner>

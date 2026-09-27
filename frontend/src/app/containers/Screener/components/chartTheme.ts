@@ -35,6 +35,13 @@ const BASE_OPTIONS: DeepPartial<ChartOptions> = {
     background: { type: ColorType.Solid, color: 'transparent' },
     textColor: CHART_COLORS.text,
     fontSize: 11,
+    // Hide the in-chart TradingView badge. Its licence allows this when the site
+    // carries the attribution notice and a link to https://www.tradingview.com/
+    // elsewhere — the footer's "Charts by TradingView" link does that.
+    // Attribution notice (from the lightweight-charts NOTICE file):
+    //   TradingView Lightweight Charts™
+    //   Copyright (с) 2023 TradingView, Inc. https://www.tradingview.com/
+    attributionLogo: false,
   },
   grid: {
     vertLines: { color: CHART_COLORS.grid },
