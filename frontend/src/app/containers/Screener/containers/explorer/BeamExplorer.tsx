@@ -34,43 +34,7 @@ import { Overlay, CloseBtn, useEscapeClose } from '../../components/modalChrome'
 import { compact } from '../../components/format';
 import { buildHdrsCsv, buildHdrsSvg } from './hdrs-chart/hdrsExport';
 import type { HdrsExportRow, HdrsSvgModel } from './hdrs-chart/hdrsExport';
-
-// ---------------------------------------------------------------------------
-// Explorer node config
-// ---------------------------------------------------------------------------
-
-interface NetworkConfig {
-  type: 'PoW' | 'PoS';
-  description: string;
-  url: string[];
-}
-
-const explorerNodes: Record<string, NetworkConfig> = {
-  mainnet: {
-    type: 'PoW',
-    description: 'PoW, ~1-min blocks',
-    url: [
-      'https://explorer.0xmx.net/api/mainnet/',
-      'https://BeamSmart.net:8000/',
-      'https://explorer-api.beamprivacy.community/',
-    ],
-  },
-  dappnet: {
-    type: 'PoW',
-    description: 'FakePoW, ~15-sec blocks',
-    url: ['https://BeamSmart.net:8001/'],
-  },
-  dappnet2: {
-    type: 'PoS',
-    description: 'PoS, ~15-sec blocks',
-    url: ['https://explorer.0xmx.net/api/dappnet2/', 'https://BeamSmart.net:8002/'],
-  },
-  warp_dev3: {
-    type: 'PoS',
-    description: 'PoS, ~15-sec blocks',
-    url: ['https://explorer.0xmx.net/api/warp_dev3/'],
-  },
-};
+import { explorerNodes } from './networks';
 
 // Version of the explorer front end, tracking the upstream standalone
 // BeamExplorer.htm (github.com/BeamMW/beam/tree/master/explorer/htm) that this

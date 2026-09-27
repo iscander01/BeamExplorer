@@ -76,7 +76,7 @@ function renderShell(inner: string): string {
     `</g>`,
     // Brand strip.
     `<g font-family="SF Pro Display,Helvetica,Arial,sans-serif">`,
-    `  <text x="60" y="76" fill="#00f6d2" font-weight="700" font-size="22" letter-spacing="2">BEAMTERMINAL</text>`,
+    `  <text x="60" y="76" fill="#00f6d2" font-weight="700" font-size="22" letter-spacing="2">BEAM EXPLORER</text>`,
     `  <text x="${OG_WIDTH - 60}" y="76" text-anchor="end" fill="rgba(255,255,255,0.45)" font-size="16">beamterminal.0xmx.net</text>`,
     `</g>`,
     inner,

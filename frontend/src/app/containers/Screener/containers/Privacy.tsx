@@ -60,7 +60,7 @@ export const Privacy: React.FC = () => (
     <Updated>Last updated: 2026-05-26</Updated>
 
     <p>
-      BeamTerminal is a block-explorer and DEX analytics front-end for the Beam network, operated under{' '}
+      Beam Explorer is a block-explorer and DEX analytics front-end for the Beam network, operated under{' '}
       <strong>0xmx.net</strong> (&ldquo;we&rdquo;, &ldquo;us&rdquo;). This policy explains what data we process when you
       visit beamterminal.0xmx.net or any other site we host under 0xmx.net.
     </p>

@@ -23,5 +23,8 @@ export const ROUTES = {
     ASSET_SWAPS: '/asset-swaps',
     DAPPS: '/dapps',
     PRIVACY: '/privacy',
+    // explorer.beam.mw path shapes the BEAM desktop wallet links to.
+    LEGACY_BLOCK: '/block',
+    LEGACY_ASSET_DETAILS: '/assets/details/:id',
   },
 };

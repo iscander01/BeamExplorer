@@ -16,6 +16,7 @@ import { PairsList } from '@app/containers/Screener/containers/PairsList';
 import { AssetsList } from '@app/containers/Screener/containers/AssetsList';
 import { ExplorerLayout } from '@app/containers/Screener/containers/ExplorerLayout';
 import { DaoLayout } from '@app/containers/Screener/containers/DaoLayout';
+import { LegacyAssetRedirect, LegacyBlockRedirect } from '@app/containers/Screener/containers/LegacyExplorerRedirect';
 import { Footer } from '@app/containers/Screener/components/Footer';
 import { AssetColorsProvider } from '@app/containers/Screener/assetColors';
 import { ROUTES } from '@app/shared/constants';
@@ -88,7 +89,7 @@ const DaoProposal = React.lazy(() =>
 );
 
 const routes = [
-  { path: '*', element: <Navigate to={ROUTES.NAV.DEX} replace /> },
+  { path: '*', element: <Navigate to={ROUTES.NAV.EXPLORER_CHARTS} replace /> },
   { path: ROUTES.NAV.DEX, element: <PairsList /> },
   { path: ROUTES.NAV.LIQUIDITY, element: <LiquidityPosition /> },
   { path: ROUTES.NAV.PAIR_DETAIL, element: <PairDetail /> },
@@ -98,6 +99,8 @@ const routes = [
   { path: ROUTES.NAV.ASSET_SWAPS, element: <AssetSwaps /> },
   { path: ROUTES.NAV.DAPPS, element: <Dapps /> },
   { path: ROUTES.NAV.PRIVACY, element: <Privacy /> },
+  { path: ROUTES.NAV.LEGACY_BLOCK, element: <LegacyBlockRedirect /> },
+  { path: ROUTES.NAV.LEGACY_ASSET_DETAILS, element: <LegacyAssetRedirect /> },
   {
     path: ROUTES.NAV.EXPLORER,
     element: <ExplorerLayout />,

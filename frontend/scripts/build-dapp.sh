@@ -2,8 +2,8 @@
 set -euo pipefail
 
 DAPP_NAME="beamterminal"
-MANIFEST_NAME="BeamTerminal"
-MANIFEST_DESCRIPTION="Beam DEX terminal — pairs, charts, trades, swap."
+MANIFEST_NAME="Beam Explorer"
+MANIFEST_DESCRIPTION="Beam block explorer and DEX analytics — charts, blocks, pairs, swap."
 MANIFEST_VERSION_PREFIX="1.0"
 MANIFEST_ICON="localapp/app/favicon.svg"
 MANIFEST_URL="localapp/app/index.html"

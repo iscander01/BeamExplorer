@@ -20,6 +20,23 @@ css`
       --color-opasity-0-1: rgba(255, 255, 255, 0.1);
 
       /*
+       * BEAM brand palette + page gradient, from the Beam Explorer "front"
+       * theme (the original explorer's look). Stops match the logo in TopNav.
+       */
+      --color-beam-sky: #25c1ff;
+      --color-beam-blue: #0b76ff;
+      --color-beam-cyan: #39fff2;
+      --color-beam-green: #00e2c2;
+      --color-beam-pink: #fe52ff;
+      --color-beam-purple: #ab37e6;
+      --gradient-beam: linear-gradient(135deg, #0b76ff 0%, #39fff2 100%);
+      --gradient-page: linear-gradient(180deg, #032e49, #0073a6),
+        radial-gradient(circle at 50% 0, rgba(255, 255, 255, 0.5), rgba(0, 0, 0, 0.5)),
+        linear-gradient(to left, rgba(255, 255, 255, 0.5), #d33b65),
+        linear-gradient(297deg, #156fc3, rgba(255, 255, 255, 0.5)),
+        radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0), rgba(21, 6, 40, 0.12));
+
+      /*
        * Typography — deliberate system-font stacks; no webfonts are shipped.
        * --font-mono carries the terminal look of the data surfaces (tables,
        * numerals, hashes). ui-monospace is unknown to the wallet's QtWebEngine
@@ -133,10 +150,15 @@ css`
       color: white;
     }
 
-    /* Same shell as Window (Utils.isWeb() || Utils.isMobile()); fills viewport behind TopNav */
+    /* Same shell as Window (Utils.isWeb() || Utils.isMobile()); fills viewport behind TopNav.
+       Fixed so the gradient spans the viewport instead of stretching over the
+       whole (long) document; the solid colour covers the first paint. */
     body.web,
     body.mobile {
-      background-color: var(--color-dark-blue);
+      background-color: var(--color-darkest-blue);
+      background-image: var(--gradient-page);
+      background-attachment: fixed;
+      background-blend-mode: normal, multiply, multiply, multiply;
       min-height: 100vh;
     }
 

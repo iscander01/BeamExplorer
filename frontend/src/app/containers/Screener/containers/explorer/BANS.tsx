@@ -210,20 +210,26 @@ const LogoArea = styled.div`
   }
 `;
 
+// Sticky card in the same frame as ContractBar. The page background is a
+// gradient, so no solid colour can "blend in": a translucent darkest-blue plus
+// a blur keeps it readable over content scrolling underneath. Children carry
+// right/vertical margins (no flex gap in the wallet's Chrome 83) so wrapped
+// rows stay aligned.
 const JumpNav = styled.nav`
   position: sticky;
-  top: 0;
+  top: 8px;
   z-index: 5;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  & > * + * {
-    margin-left: 6px;
+  & > * {
+    margin: 3px 6px 3px 0;
   }
-  /* Match the page background so the sticky bar blends in (no visible band)
-     while staying opaque enough to cover content scrolling under it. */
-  background: ${theme.color.bg};
-  padding: 8px 0;
+  background: rgba(3, 46, 73, 0.82);
+  backdrop-filter: blur(8px);
+  border: 1px solid ${theme.color.borderDim};
+  border-radius: ${theme.radius.lg};
+  padding: 5px 10px 5px 16px;
   margin-bottom: 16px;
 `;
 
@@ -232,7 +238,9 @@ const JumpLabel = styled.span`
   text-transform: uppercase;
   letter-spacing: 0.06em;
   font-size: 10px;
-  margin-right: 4px;
+  && {
+    margin-right: 10px;
+  }
 `;
 
 const ContractBar = styled.div`

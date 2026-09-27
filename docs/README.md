@@ -19,6 +19,7 @@ The product is the v2 of [BeamAssets.com](https://beamassets.com) / [BeamScreene
 | [CoinGecko.md](CoinGecko.md) | `/cg/*` public endpoints for CoinGecko ingestion. |
 | [frontend.md](frontend.md) | React app: pages, charts, swap panel, `.dapp` packaging. |
 | [deployment.md](deployment.md) | VPS layout, docker-compose, explorer-node, TLS, runbook. |
+| [railway.md](railway.md) | Hosting the frontend on Railway (data from the public API). |
 
 ## Repo layout
 

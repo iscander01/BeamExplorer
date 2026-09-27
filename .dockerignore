@@ -1,0 +1,7 @@
+# Build context for railway/web.Dockerfile (the only image built from the repo
+# root; the backend images use backend/ as their context).
+**/.git
+**/node_modules
+frontend/html
+backend
+docs

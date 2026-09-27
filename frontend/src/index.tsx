@@ -6,23 +6,6 @@ import { HashRouter } from 'react-router-dom';
 import configureStore from '@app/store/store';
 import App from './app';
 
-// HashRouter expects the route in the URL fragment (e.g. /#/charts), but
-// people share / paste path-style URLs (https://beamterminal.0xmx.net/charts).
-// nginx serves index.html for any path, so without this redirect the SPA
-// would just default to /pairs. Rewrite the path into the hash before mount.
-//
-// Skip when the path points at a real file (`*.html`): inside the BEAM Wallet
-// the page loads at `http://127.0.0.1:<port>/<guid>/app/index.html`, and
-// rewriting that into the hash drops the path component, so every relative
-// XHR (./amm.wasm, favicon.svg) resolves to the
-// server root and 404s.
-if (typeof window !== 'undefined') {
-  const p = window.location.pathname;
-  if (p && p !== '/' && !p.endsWith('.html') && !window.location.hash) {
-    window.history.replaceState(null, '', `/#${p}${window.location.search}`);
-  }
-}
-
 if (process.env.NODE_ENV === 'development') {
   // eslint-disable-next-line import/no-extraneous-dependencies -- dev-only tool, stripped from prod builds
   import('react-grab').then((m) =>

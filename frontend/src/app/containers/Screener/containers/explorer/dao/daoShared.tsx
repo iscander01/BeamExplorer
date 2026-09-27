@@ -307,7 +307,7 @@ export const ExternalLink: React.FC<{ href?: string; className?: string; childre
       {open && (
         <Overlay z={60} backdrop="rgba(2, 12, 24, 0.82)" pad="0" onClick={closeConfirm}>
           <ExtModal onClick={(e) => e.stopPropagation()}>
-            <ExtHead>You are leaving BeamTerminal</ExtHead>
+            <ExtHead>You are leaving Beam Explorer</ExtHead>
             <ExtBody>
               <p>Are you sure you want to open this external URL?</p>
               <ExtUrl>{href}</ExtUrl>

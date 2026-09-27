@@ -69,7 +69,7 @@ Verify changes with `yarn build:prod` — the pinned TypeScript flags false posi
 
 ## Deployment
 
-Runs under docker-compose (Postgres, indexer, API, wallet API), with the explorer node managed separately and nginx terminating TLS at the edge. Full runbook in [`docs/deployment.md`](docs/deployment.md).
+Runs under docker-compose (Postgres, indexer, API, wallet API), with the explorer node managed separately and nginx terminating TLS at the edge. Full runbook in [`docs/deployment.md`](docs/deployment.md). To host just the frontend on Railway, see [`docs/railway.md`](docs/railway.md).
 
 ## Documentation
 
@@ -85,5 +85,6 @@ Design and decisions live in [`docs/`](docs/README.md).
 | [`CoinGecko.md`](docs/CoinGecko.md)       | CoinGecko-compliant public endpoints        |
 | [`frontend.md`](docs/frontend.md)         | Page-by-page UI plan, mobile, wallet bridge |
 | [`deployment.md`](docs/deployment.md)     | Build, run, and update steps; IPFS swarm    |
+| [`railway.md`](docs/railway.md)           | Hosting the frontend on Railway             |
 
 
