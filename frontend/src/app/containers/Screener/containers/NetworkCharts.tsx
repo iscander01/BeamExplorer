@@ -430,9 +430,11 @@ const Grid = styled.div`
   }
 `;
 
+// Same translucent "glass" card as the explorer panels (block page, BANS),
+// letting the page gradient show through instead of a flat navy tile.
 const Cell = styled.div`
-  background: #042548;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
   padding: 8px;
   height: 320px;
@@ -606,8 +608,8 @@ const ModalActionGroup = styled.div`
 const ModalBody = styled.div`
   flex: 1;
   min-height: 0;
-  background: #042548;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
   padding: 8px;
 `;

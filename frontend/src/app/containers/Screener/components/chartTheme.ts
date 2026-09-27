@@ -18,7 +18,6 @@ import {
 // colours (teal up / red down), so charts read them from here instead of
 // re-typing the hex literals.
 export const CHART_COLORS = {
-  bg: '#042548',
   text: 'rgba(255, 255, 255, 0.55)',
   grid: 'rgba(255, 255, 255, 0.04)',
   border: 'rgba(255, 255, 255, 0.1)',
@@ -30,7 +29,10 @@ export const CHART_COLORS = {
 const BASE_OPTIONS: DeepPartial<ChartOptions> = {
   autoSize: true,
   layout: {
-    background: { type: ColorType.Solid, color: CHART_COLORS.bg },
+    // Transparent: every chart sits inside a card, which supplies the surface
+    // (the translucent "glass" over the page gradient), so the chart doesn't
+    // paint an opaque navy block of its own.
+    background: { type: ColorType.Solid, color: 'transparent' },
     textColor: CHART_COLORS.text,
     fontSize: 11,
   },
