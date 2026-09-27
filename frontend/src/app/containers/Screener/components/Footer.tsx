@@ -24,50 +24,34 @@ const Wrap = styled.footer`
   background: rgba(4, 37, 72, 0.4);
 `;
 
-// One row: BEAM · Community on the left, attribution + indexer status on the
-// right, bottom-aligned with the icon row. Wraps to stacked rows on narrow
-// screens. Plain margins, not flex gap (the wallet's Chrome 83 predates it).
+// One centred line: BEAM · Community · attribution · indexer status, each
+// group vertically centred with its label beside (not above) its content.
+// Wraps onto centred lines on narrow screens. Plain margins, not flex gap (the
+// wallet's Chrome 83 predates it).
 const Inner = styled.div`
   max-width: 1200px;
   margin: 0 auto;
-  padding: 24px 16px;
+  padding: 16px;
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: center;
+  justify-content: center;
 `;
 
 const Col = styled.div`
   display: flex;
-  flex-direction: column;
-  margin: 0 64px 8px 0;
+  align-items: center;
+  margin: 6px 20px;
   & > * + * {
-    margin-top: 6px;
-  }
-
-  @media (max-width: 600px) {
-    margin-right: 40px;
+    margin-left: 10px;
   }
 `;
 
-const Meta = styled.div`
-  margin: 0 0 8px auto;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
+const Meta = styled(Col)`
   font-size: 11px;
   color: rgba(255, 255, 255, 0.4);
-  & > * {
-    margin: 4px 0 4px 16px;
-  }
-
-  @media (max-width: 600px) {
-    margin-left: 0;
-    width: 100%;
-    justify-content: space-between;
-    & > * {
-      margin-left: 0;
-    }
+  & > * + * {
+    margin-left: 16px;
   }
 `;
 
@@ -77,7 +61,6 @@ const ColTitle = styled.div`
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: rgba(255, 255, 255, 0.4);
-  margin-bottom: 2px;
 `;
 
 const FLink = styled.a`
@@ -95,9 +78,8 @@ const FLink = styled.a`
 // wallet's Chrome 83 predates it).
 const IconRow = styled.div`
   display: flex;
-  flex-wrap: wrap;
-  & > * {
-    margin: 0 10px 6px 0;
+  & > * + * {
+    margin-left: 8px;
   }
 `;
 
@@ -105,16 +87,16 @@ const IconLink = styled.a`
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   color: rgba(255, 255, 255, 0.7);
   transition: color 120ms, border-color 120ms;
 
   svg {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
     fill: currentColor;
   }
 
