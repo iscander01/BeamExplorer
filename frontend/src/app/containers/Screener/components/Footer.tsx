@@ -63,8 +63,13 @@ const ColTitle = styled.div`
   color: rgba(255, 255, 255, 0.4);
 `;
 
-const FLink = styled.a`
-  font-size: 13px;
+// "BEAM" label doubling as the beam.mw link: the label's mono caps, a touch
+// brighter than the plain labels so it reads as clickable.
+const TitleLink = styled.a`
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   color: rgba(255, 255, 255, 0.7);
   text-decoration: none;
   transition: color 120ms;
@@ -209,10 +214,9 @@ export const Footer: React.FC = () => (
     <Wrap>
       <Inner>
         <Col>
-          <ColTitle>BEAM</ColTitle>
-          <FLink href="https://beam.mw" target="_blank" rel="noopener noreferrer">
-            beam.mw
-          </FLink>
+          <TitleLink href="https://beam.mw" target="_blank" rel="noopener noreferrer" title="beam.mw">
+            BEAM
+          </TitleLink>
         </Col>
         <Col>
           <ColTitle>Community</ColTitle>
