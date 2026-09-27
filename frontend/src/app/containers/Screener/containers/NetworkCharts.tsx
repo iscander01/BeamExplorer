@@ -1,3 +1,4 @@
+import { Loading } from '@app/shared/components/Loading';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { styled } from '@linaria/react';
@@ -1101,7 +1102,7 @@ const ChartCell: React.FC<ChartCellProps & { onToggleLog: () => void; headerExtr
         />
       ) : (
         <CenteredNote pad="80px 0" size={13}>
-          {state.error ?? (state.loading ? 'Loading…' : emptyLabel ?? 'No data')}
+          {state.error ?? (state.loading ? <Loading size="sm" pad="0" /> : emptyLabel ?? 'No data')}
         </CenteredNote>
       )}
     </ChartShell>
@@ -1129,7 +1130,7 @@ const BlackholeCell: React.FC<{
         <BlackholeChart series={filtered} logScale={logScale} formatter={formatter} />
       ) : (
         <CenteredNote pad="80px 0" size={13}>
-          {state.error ?? (state.loading ? 'Loading…' : 'No data')}
+          {state.error ?? (state.loading ? <Loading size="sm" pad="0" /> : 'No data')}
         </CenteredNote>
       )}
     </ChartShell>
@@ -1164,7 +1165,7 @@ const KeyedLinesCell: React.FC<{
         <KeyedLinesChart series={filtered} logScale={logScale} formatter={formatter} fill={fill} />
       ) : (
         <CenteredNote pad="80px 0" size={13}>
-          {state.error ?? (state.loading ? 'Loading…' : 'No data')}
+          {state.error ?? (state.loading ? <Loading size="sm" pad="0" /> : 'No data')}
         </CenteredNote>
       )}
     </ChartShell>
@@ -2343,7 +2344,7 @@ const ExpandedChart: React.FC<
   if (!shown || shown.length === 0)
     return (
       <CenteredNote pad="80px 0" size={13}>
-        {error ?? (loading ? 'Loading…' : emptyLabel ?? 'No data')}
+        {error ?? (loading ? <Loading size="sm" pad="0" /> : emptyLabel ?? 'No data')}
       </CenteredNote>
     );
   return (
@@ -2377,7 +2378,7 @@ const ExpandedBlackhole: React.FC<{
   if (!filtered || filtered.length === 0) {
     return (
       <CenteredNote pad="80px 0" size={13}>
-        {state.error ?? (state.loading ? 'Loading…' : 'No data')}
+        {state.error ?? (state.loading ? <Loading size="sm" pad="0" /> : 'No data')}
       </CenteredNote>
     );
   }
@@ -2420,7 +2421,7 @@ const ExpandedKeyedLines: React.FC<{
   if (!filtered || filtered.length === 0) {
     return (
       <CenteredNote pad="80px 0" size={13}>
-        {state.error ?? (state.loading ? 'Loading…' : 'No data')}
+        {state.error ?? (state.loading ? <Loading size="sm" pad="0" /> : 'No data')}
       </CenteredNote>
     );
   }

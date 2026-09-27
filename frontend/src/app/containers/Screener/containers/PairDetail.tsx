@@ -1,3 +1,4 @@
+import { Loading } from '@app/shared/components/Loading';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { styled } from '@linaria/react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -16,7 +17,6 @@ import { useAssetColor } from '../assetColors';
 import { AssetMetaBanner } from '../components/AssetMetaBanner';
 import { LiquidityBanner } from '../components/LiquidityBanner';
 import { Pager } from '../components/Pager';
-import { CenteredNote } from '../components/CenteredNote';
 import { tierFeePct } from '../components/modalChrome';
 import {
   fmt$,
@@ -614,7 +614,7 @@ export const PairDetail: React.FC = () => {
   const { items: tradeItems, total: tradesTotal } = usePagedTrades(dataId, tradesPage, TRADES_PAGE_SIZE);
 
   if (pairLoading || !pair) {
-    return <CenteredNote>Loading pair…</CenteredNote>;
+    return <Loading label="Loading pair…" />;
   }
 
   const p: ApiPair = pair;

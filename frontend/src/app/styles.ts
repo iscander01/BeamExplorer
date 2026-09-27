@@ -169,9 +169,13 @@ css`
       background: none;
     }
 
+    /* Column shell: TopNav, page, footer. The Footer's spacer takes the
+       leftover height, so on short pages the footer sits at the bottom of the
+       viewport instead of mid-screen. */
     #root {
-      display: block;
-      min-height: 100%;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
       width: 100%;
       max-width: 100%;
     }

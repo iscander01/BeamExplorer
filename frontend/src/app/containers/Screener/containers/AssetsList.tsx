@@ -1,3 +1,4 @@
+import { Loading } from '@app/shared/components/Loading';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { styled } from '@linaria/react';
 import { useNavigate } from 'react-router-dom';
@@ -253,7 +254,7 @@ export const AssetsList: React.FC = () => {
             {error}
           </CenteredNote>
         ) : loading && filtered.length === 0 ? (
-          <CenteredNote>Loading assets…</CenteredNote>
+          <Loading label="Loading assets…" />
         ) : filtered.length === 0 ? (
           <CenteredNote>No assets match.</CenteredNote>
         ) : (

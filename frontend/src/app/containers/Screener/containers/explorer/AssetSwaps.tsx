@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { Loading } from '@app/shared/components/Loading';
 import { styled } from '@linaria/react';
 import AssetsSwapGlyph from '@app/shared/icons/icon-assets-swap.svg';
 import AssetIcon from '@app/shared/components/AssetsIcon';
@@ -175,7 +176,7 @@ export const AssetSwaps: React.FC = () => {
           </ErrorBox>
         ) : null}
         {offers === null ? (
-          <Muted>Loading…</Muted>
+          <Loading size="sm" />
         ) : offers.length === 0 ? (
           <EmptyState>
             <EmptyIcon>

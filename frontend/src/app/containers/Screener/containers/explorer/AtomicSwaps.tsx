@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { Loading } from '@app/shared/components/Loading';
 import AtomicSwapGlyph from '@app/shared/icons/icon-atomic-swap.svg';
 import {
   Page,
@@ -132,7 +133,7 @@ export const AtomicSwaps: React.FC = () => {
         </Toolbar>
         {err ? <ErrorBox>{err}</ErrorBox> : null}
         {offers === null ? (
-          <Muted>Loading…</Muted>
+          <Loading size="sm" />
         ) : offers.length === 0 ? (
           <EmptyState>
             <EmptyIcon>

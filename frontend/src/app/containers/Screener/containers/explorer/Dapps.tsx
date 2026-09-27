@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Loading } from '@app/shared/components/Loading';
 import { useSearchParams } from 'react-router-dom';
 import { styled } from '@linaria/react';
 import BeamDappConnector from '@core/BeamDappConnector.js';
@@ -991,7 +992,7 @@ const DappModal: React.FC<{
 
           <H3>Version history</H3>
           {loading ? (
-            <Muted>Loading…</Muted>
+            <Loading size="sm" />
           ) : versions.length === 0 ? (
             <Muted>
               No version history captured yet. The projection layer currently sees only the current version — older
@@ -1173,7 +1174,7 @@ export const Dapps: React.FC = () => {
 
         {tab === 'dapps' &&
           (dapps === null ? (
-            <Muted>Loading…</Muted>
+            <Loading size="sm" />
           ) : dapps.length === 0 ? (
             <Muted>No dapps registered yet.</Muted>
           ) : (
@@ -1210,7 +1211,7 @@ export const Dapps: React.FC = () => {
 
         {tab === 'publishers' &&
           (publishers === null ? (
-            <Muted>Loading…</Muted>
+            <Loading size="sm" />
           ) : publishers.length === 0 ? (
             <Muted>No publishers registered yet.</Muted>
           ) : (

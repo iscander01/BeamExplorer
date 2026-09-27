@@ -1,3 +1,4 @@
+import { Loading } from '@app/shared/components/Loading';
 import React, { useMemo, useState } from 'react';
 import { styled } from '@linaria/react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
@@ -221,7 +222,11 @@ export const AssetDetail: React.FC = () => {
   }, [history, asset]);
 
   if (assetLoading || !asset) {
-    return <Page>Loading asset…</Page>;
+    return (
+      <Page>
+        <Loading label="Loading asset…" />
+      </Page>
+    );
   }
 
   const supplyHuman = asset.emission ? Number(asset.emission) / 10 ** asset.decimals : null;
@@ -474,7 +479,7 @@ export const AssetDetail: React.FC = () => {
 
       {tab === 'distribution' &&
         (distLoading && !distribution ? (
-          <CenteredNote pad="40px 12px">Loading distribution…</CenteredNote>
+          <Loading pad="40px 12px" label="Loading distribution…" />
         ) : distError ? (
           <CenteredNote pad="40px 12px">Distribution unavailable.</CenteredNote>
         ) : !distribution || (distribution.entries.length === 0 && distribution.unlocked === '0') ? (

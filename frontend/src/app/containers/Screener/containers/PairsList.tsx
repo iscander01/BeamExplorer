@@ -1,3 +1,4 @@
+import { Loading } from '@app/shared/components/Loading';
 import React, { useState, useMemo, useCallback } from 'react';
 import { styled } from '@linaria/react';
 import { useNavigate, Link } from 'react-router-dom';
@@ -519,7 +520,7 @@ export const PairsList: React.FC = () => {
             {error}
           </CenteredNote>
         ) : loading && pairs.length === 0 ? (
-          <CenteredNote>Loading pairs…</CenteredNote>
+          <Loading label="Loading pairs…" />
         ) : filtered.length === 0 ? (
           <CenteredNote>{emptyMessage}</CenteredNote>
         ) : (

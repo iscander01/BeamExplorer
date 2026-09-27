@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Loading } from '@app/shared/components/Loading';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { styled } from '@linaria/react';
 import { api } from '@app/containers/Screener/api/client';
@@ -953,7 +954,7 @@ const BridgeTracker: React.FC = () => {
           Each bridge mints a wrapped asset on one chain against collateral locked on the other. The bar shows how much
           of the locked collateral has been issued — full and green means every minted unit is backed.
         </Muted>
-        {!health && !healthErr && <Muted>Loading…</Muted>}
+        {!health && !healthErr && <Loading size="sm" />}
         <BridgeGrid>
           {(health?.bridges ?? []).map((row) => (
             <BridgeSummaryCard

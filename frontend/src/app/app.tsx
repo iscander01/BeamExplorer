@@ -20,7 +20,8 @@ import { LegacyAssetRedirect, LegacyBlockRedirect } from '@app/containers/Screen
 import { Footer } from '@app/containers/Screener/components/Footer';
 import { AssetColorsProvider } from '@app/containers/Screener/assetColors';
 import { ROUTES } from '@app/shared/constants';
-import { Loader, TopNav } from '@app/shared/components';
+import { TopNav } from '@app/shared/components';
+import { Loading } from '@app/shared/components/Loading';
 import ErrorBoundary from '@app/shared/components/ErrorBoundary';
 import BeamDappConnector from '@core/BeamDappConnector.js';
 import { selectIsLoaded } from '@app/shared/store/selectors';
@@ -162,15 +163,7 @@ const App = () => {
           <TopNav />
           <AssetColorsProvider>
             <ErrorBoundary>
-              <React.Suspense
-                fallback={
-                  <div style={{ textAlign: 'center', padding: '60px 20px', color: 'rgba(255, 255, 255, 0.5)' }}>
-                    Loading…
-                  </div>
-                }
-              >
-                {content}
-              </React.Suspense>
+              <React.Suspense fallback={<Loading />}>{content}</React.Suspense>
             </ErrorBoundary>
           </AssetColorsProvider>
           <Footer />
@@ -197,7 +190,7 @@ const App = () => {
           />
         </>
       ) : (
-        <Loader />
+        <Loading label="Loading Beam Explorer…" pad="30vh 20px 0" />
       )}
     </>
   );

@@ -1,4 +1,5 @@
 import React, { useCallback, useState } from 'react';
+import { Loading } from '@app/shared/components/Loading';
 import { styled } from '@linaria/react';
 import AssetIcon, { useAssetColorResolver } from '@app/shared/components/AssetsIcon';
 import { BlockHeight } from '@app/shared/components';
@@ -539,7 +540,7 @@ export const DaoTreasury: React.FC = () => {
               </Closer>
             </ModalHead>
             {!hist.data ? (
-              <div style={{ padding: 22, color: theme.color.muted, fontSize: 12 }}>Loading…</div>
+              <Loading size="sm" />
             ) : (
               <>
                 <HistSummary>

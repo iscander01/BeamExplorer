@@ -1,3 +1,4 @@
+import { Loading } from '@app/shared/components/Loading';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
@@ -20,7 +21,6 @@ import {
   theme,
 } from './shared';
 import { specialBlocks } from './supplyMath';
-import { CenteredNote } from '../../components/CenteredNote';
 import { useBlockTimestamp, type BlockUrlResolver } from '../../../../shared/components/BlockHeight';
 import { assetLabel } from '../../../../shared/components/AssetLabel';
 import { useComparePoints } from '../../components/chart-compare/useComparePoints';
@@ -1639,6 +1639,70 @@ function AssetsTable({ data, ctx, ownerFilter }: { data: any; ctx: RenderCtx; ow
   );
 }
 
+// Block page header: title on the left, navigation on the right, in the same
+// card frame as the sections below. Plain margins, not flex gap (the wallet's
+// Chrome 83 predates it).
+const BlockHead = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  background: ${theme.color.surface};
+  border: 1px solid ${theme.color.borderDim};
+  border-radius: ${theme.radius.lg};
+  padding: 12px 16px;
+  margin-bottom: 14px;
+`;
+
+const BlockTitle = styled.div`
+  display: flex;
+  flex-direction: column;
+  margin: 4px 16px 4px 0;
+`;
+
+const BlockLabel = styled.span`
+  color: ${theme.color.muted};
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+`;
+
+const BlockHeight = styled.span`
+  color: ${theme.color.accent};
+  font-family: ${theme.font.mono};
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+`;
+
+const BlockNav = styled.div`
+  display: flex;
+  align-items: center;
+  margin: 4px 0;
+  & > * + * {
+    margin-left: 10px;
+  }
+`;
+
+// Prev / Next joined into one segmented control.
+const BlockPager = styled.div`
+  display: inline-flex;
+  & > button:first-child {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  & > button + button {
+    margin-left: -1px;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+  }
+  & > button:hover {
+    position: relative;
+    z-index: 1;
+  }
+`;
+
 function BlockView({ data, view, ctx }: { data: any; view: ViewState; ctx: RenderCtx }): JSX.Element {
   const isTreasury = view.type === 'treasury' || view.height === '0';
   if (data?.found === false || (data?.info === undefined && !isTreasury)) {
@@ -1650,31 +1714,40 @@ function BlockView({ data, view, ctx }: { data: any; view: ViewState; ctx: Rende
 
   return (
     <>
-      <H2>
-        {isTreasury ? (
-          'Treasury'
-        ) : (
-          <>
-            Block
-            <span style={{ color: theme.color.accent }}>{heightStr}</span>
-          </>
-        )}{' '}
-        <Btn
-          data-variant="ghost"
-          onClick={() => ctx.go({ type: 'hdrs', hMax: String(height) })}
-          title="List of block headers up to this one"
-        >
-          Headers
-        </Btn>{' '}
-        {height > 0 && (
-          <Btn data-variant="ghost" onClick={() => ctx.go({ type: 'block', height: String(height - 1), adj: '-1' })}>
-            ← Prev
+      <BlockHead>
+        <BlockTitle>
+          <BlockLabel>Block</BlockLabel>
+          <BlockHeight>
+            {isTreasury ? 'Treasury' : Number.isFinite(height) ? height.toLocaleString('en-US') : heightStr}
+          </BlockHeight>
+        </BlockTitle>
+        <BlockNav>
+          <Btn
+            data-variant="ghost"
+            onClick={() => ctx.go({ type: 'hdrs', hMax: String(height) })}
+            title="List of block headers up to this one"
+          >
+            Headers
           </Btn>
-        )}{' '}
-        <Btn data-variant="ghost" onClick={() => ctx.go({ type: 'block', height: String(height + 1), adj: '1' })}>
-          Next →
-        </Btn>
-      </H2>
+          <BlockPager>
+            <Btn
+              data-variant="ghost"
+              disabled={!(height > 0)}
+              onClick={() => ctx.go({ type: 'block', height: String(height - 1), adj: '-1' })}
+              title="Previous block"
+            >
+              ← Prev
+            </Btn>
+            <Btn
+              data-variant="ghost"
+              onClick={() => ctx.go({ type: 'block', height: String(height + 1), adj: '1' })}
+              title="Next block"
+            >
+              Next →
+            </Btn>
+          </BlockPager>
+        </BlockNav>
+      </BlockHead>
 
       {data?.info && (
         <Collapsible open>
@@ -4482,10 +4555,12 @@ export const BeamExplorer: React.FC = () => {
         </NavTabs>
 
         {loading && (
-          <CenteredNote pad="24px" size={16}>
-            Loading…
-            {progress && progress.total > 1 && ` (request ${progress.done}/${progress.total})`}
-          </CenteredNote>
+          <Loading
+            pad="40px 20px"
+            label={
+              progress && progress.total > 1 ? `Loading… request ${progress.done} of ${progress.total}` : 'Loading…'
+            }
+          />
         )}
         {error && (
           <ErrorBox>

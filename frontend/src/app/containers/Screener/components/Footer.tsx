@@ -11,31 +11,63 @@ interface HealthResp {
   lag_seconds: number;
 }
 
+// Grows to fill the leftover height of #root's column (min 48px of breathing
+// room above the footer), which pins the footer to the viewport bottom on
+// short pages.
+const Spacer = styled.div`
+  flex: 1 0 48px;
+`;
+
 const Wrap = styled.footer`
   width: 100%;
-  margin-top: 48px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
   background: rgba(4, 37, 72, 0.4);
 `;
 
+// One row: BEAM · Community on the left, attribution + indexer status on the
+// right, bottom-aligned with the icon row. Wraps to stacked rows on narrow
+// screens. Plain margins, not flex gap (the wallet's Chrome 83 predates it).
 const Inner = styled.div`
   max-width: 1200px;
   margin: 0 auto;
-  padding: 28px 16px 20px;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  grid-gap: 24px;
-
-  @media (max-width: 800px) {
-    grid-template-columns: 1fr 1fr;
-  }
+  padding: 24px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
 `;
 
 const Col = styled.div`
   display: flex;
   flex-direction: column;
+  margin: 0 64px 8px 0;
   & > * + * {
     margin-top: 6px;
+  }
+
+  @media (max-width: 600px) {
+    margin-right: 40px;
+  }
+`;
+
+const Meta = styled.div`
+  margin: 0 0 8px auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+  & > * {
+    margin: 4px 0 4px 16px;
+  }
+
+  @media (max-width: 600px) {
+    margin-left: 0;
+    width: 100%;
+    justify-content: space-between;
+    & > * {
+      margin-left: 0;
+    }
   }
 `;
 
@@ -123,22 +155,6 @@ const BottomLink = styled.a`
   }
 `;
 
-const BottomBar = styled.div`
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 12px 16px 18px;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  & > * + * {
-    margin-left: 12px;
-  }
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.4);
-  flex-wrap: wrap;
-`;
-
 const Badge = styled.span<{ tone: 'ok' | 'lag' | 'err' }>`
   display: inline-flex;
   align-items: center;
@@ -206,44 +222,47 @@ const IndexerBadge: React.FC = () => {
 };
 
 export const Footer: React.FC = () => (
-  <Wrap>
-    <Inner>
-      <Col>
-        <ColTitle>BEAM</ColTitle>
-        <FLink href="https://beam.mw" target="_blank" rel="noopener noreferrer">
-          beam.mw
-        </FLink>
-      </Col>
-      <Col>
-        <ColTitle>Community</ColTitle>
-        <IconRow>
-          {COMMUNITY.map((c) => (
-            <IconLink
-              key={c.label}
-              href={c.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={c.label}
-              title={c.label}
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d={c.path} />
-              </svg>
-            </IconLink>
-          ))}
-        </IconRow>
-      </Col>
-    </Inner>
-    <BottomBar>
-      <span>
-        Built on{' '}
-        <BottomLink href="https://beamterminal.0xmx.net/" target="_blank" rel="noopener noreferrer">
-          BeamTerminal
-        </BottomLink>
-      </span>
-      <IndexerBadge />
-    </BottomBar>
-  </Wrap>
+  <>
+    <Spacer />
+    <Wrap>
+      <Inner>
+        <Col>
+          <ColTitle>BEAM</ColTitle>
+          <FLink href="https://beam.mw" target="_blank" rel="noopener noreferrer">
+            beam.mw
+          </FLink>
+        </Col>
+        <Col>
+          <ColTitle>Community</ColTitle>
+          <IconRow>
+            {COMMUNITY.map((c) => (
+              <IconLink
+                key={c.label}
+                href={c.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={c.label}
+                title={c.label}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d={c.path} />
+                </svg>
+              </IconLink>
+            ))}
+          </IconRow>
+        </Col>
+        <Meta>
+          <span>
+            Built on{' '}
+            <BottomLink href="https://beamterminal.0xmx.net/" target="_blank" rel="noopener noreferrer">
+              BeamTerminal
+            </BottomLink>
+          </span>
+          <IndexerBadge />
+        </Meta>
+      </Inner>
+    </Wrap>
+  </>
 );
 
 export default Footer;

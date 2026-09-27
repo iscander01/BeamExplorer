@@ -2,6 +2,7 @@
 // Renders inside the Mining.tsx modal. No chart.js, no new npm deps.
 // Chrome-83 / QtWebEngine 5.15.2 safe.
 
+import { Loading } from '@app/shared/components/Loading';
 import React, { useEffect, useMemo, useState } from 'react';
 import { styled } from '@linaria/react';
 import { fmtGrouped } from '../../components/format';
@@ -699,7 +700,11 @@ export const MiningCalculator: React.FC = () => {
 
   return (
     <div>
-      {loading && <LoadingNote>Loading live network data…</LoadingNote>}
+      {loading && (
+        <LoadingNote>
+          <Loading inline label="Loading live network data…" />
+        </LoadingNote>
+      )}
 
       {/* Network / pre-filled inputs */}
       <SectionTitle>Network &amp; Market (auto-filled, editable)</SectionTitle>

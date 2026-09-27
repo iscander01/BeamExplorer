@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
+import { Loading } from '@app/shared/components/Loading';
 import { styled } from '@linaria/react';
 import { css } from '@linaria/core';
 import { ColorType, type IChartApi, type ISeriesApi, type LineData, type UTCTimestamp } from 'lightweight-charts';
@@ -757,7 +758,7 @@ export const Mining: React.FC = () => {
             {poolErr}
           </Muted>
         )}
-        {sorted.length === 0 && !poolErr && <Muted>Loading pool data…</Muted>}
+        {sorted.length === 0 && !poolErr && <Loading size="sm" label="Loading pool data…" />}
         {sorted.length > 0 && (
           <DataTable>
             <thead>
@@ -900,9 +901,9 @@ export const Mining: React.FC = () => {
         {tab !== 'blocks' && (
           <>
             {tab === 'diffprice' && diffSeries.length === 0 && priceSeries.length === 0 && (
-              <Muted>Loading chart data…</Muted>
+              <Loading size="sm" label="Loading chart data…" />
             )}
-            {tab === 'hashrate' && hashSeries.length === 0 && <Muted>Loading chart data…</Muted>}
+            {tab === 'hashrate' && hashSeries.length === 0 && <Loading size="sm" label="Loading chart data…" />}
             <ChartWrap ref={chartWrapRef} />
             {tab === 'diffprice' && (diffSeries.length > 0 || priceSeries.length > 0) && (
               <div style={{ marginTop: 8, fontSize: 11, color: theme.color.muted }}>
@@ -917,7 +918,7 @@ export const Mining: React.FC = () => {
       {/* ── 3. Recent blocks ─────────────────────────────────────────────── */}
       <Card>
         <H2>Recent Blocks</H2>
-        {!blocksLoaded && <Muted>Loading recent blocks…</Muted>}
+        {!blocksLoaded && <Loading size="sm" label="Loading recent blocks…" />}
         {blocksLoaded && (blocksError || blocks.length === 0) ? (
           <Muted>Recent blocks unavailable.</Muted>
         ) : (

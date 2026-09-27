@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Loading } from '@app/shared/components/Loading';
 import { useParams } from 'react-router-dom';
 import { styled } from '@linaria/react';
 import { css } from '@linaria/core';
@@ -8,7 +9,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '../../../api/client';
 import type { ApiDaoProposalDetail } from '../../../api/types';
-import { Page, Pill, ErrorBox, DataTable, ScrollX, Btn, Muted, theme } from '../shared';
+import { Page, Pill, ErrorBox, DataTable, ScrollX, Btn, theme } from '../shared';
 import { fmtBeamx, fmtCompact, grothToBeamx, variantColor, outcomeTone, outcomeLabel, ExternalLink } from './daoShared';
 
 const LIMIT = 25;
@@ -217,7 +218,7 @@ export const DaoProposal: React.FC = () => {
           {error}
         </ErrorBox>
       )}
-      {!p && !error && <Muted>Loading…</Muted>}
+      {!p && !error && <Loading size="sm" />}
       {p && (
         <>
           <TitleRow>
