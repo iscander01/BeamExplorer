@@ -211,8 +211,9 @@ const LogoArea = styled.div`
 `;
 
 // Sticky card in the same frame as ContractBar. The page background is a
-// gradient, so no solid colour can "blend in": a translucent darkest-blue plus
-// a blur keeps it readable over content scrolling underneath. Children carry
+// gradient, so no solid colour can "blend in": a near-opaque darkest-blue keeps
+// it readable over content scrolling underneath. (No backdrop-filter blur — it
+// re-rendered everything under the bar on every scroll frame.) Children carry
 // right/vertical margins (no flex gap in the wallet's Chrome 83) so wrapped
 // rows stay aligned.
 const JumpNav = styled.nav`
@@ -225,8 +226,7 @@ const JumpNav = styled.nav`
   & > * {
     margin: 3px 6px 3px 0;
   }
-  background: rgba(3, 46, 73, 0.82);
-  backdrop-filter: blur(8px);
+  background: rgba(3, 46, 73, 0.95);
   border: 1px solid ${theme.color.borderDim};
   border-radius: ${theme.radius.lg};
   padding: 5px 10px 5px 16px;

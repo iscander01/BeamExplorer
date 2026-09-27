@@ -5,7 +5,13 @@ import { CenteredNote } from '../../components/CenteredNote';
 import { CATEGORIES, methodCategory, type BansCategory } from './bansActions';
 import type { ApiBansAction } from '../../api/types';
 
+// Ticks (one per action — ~1000 on mainnet) are painted on a <canvas> rather
+// than as SVG <line>s: a thousand individually-translucent SVG nodes made every
+// scroll frame over this panel expensive to repaint. The canvas is redrawn only
+// when the data, width or lane filter changes; axes, labels and the hover
+// readout stay in the (now tiny) SVG / DOM.
 const LANES = CATEGORIES;
+const TICK_ALPHA = 0.55;
 const PAD_L = 92;
 const PAD_R = 16;
 const PAD_T = 8;
@@ -26,6 +32,7 @@ function fmtDate(ms: number): string {
 
 export const ActionTimeline: React.FC<{ actions: ApiBansAction[] }> = ({ actions }) => {
   const wrapRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [width, setWidth] = useState(720);
   const [hidden, setHidden] = useState<Set<BansCategory>>(new Set());
   const [hover, setHover] = useState<{ x: number; y: number; action: ApiBansAction } | null>(null);
@@ -82,6 +89,29 @@ export const ActionTimeline: React.FC<{ actions: ApiBansAction[] }> = ({ actions
 
   const visibleTicks = useMemo(() => ticks.filter((t) => !hidden.has(t.category)), [ticks, hidden]);
 
+  // One stroke per tick, not one path per lane, so overlapping ticks still
+  // stack their alpha — dense periods read darker, as they did in SVG.
+  useEffect(() => {
+    const cv = canvasRef.current;
+    const ctx = cv?.getContext('2d');
+    if (!cv || !ctx) return;
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(width * dpr);
+    cv.height = Math.round(height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = TICK_ALPHA;
+    for (const t of visibleTicks) {
+      const y = PAD_T + t.laneIdx * LANE_H;
+      ctx.strokeStyle = t.color;
+      ctx.beginPath();
+      ctx.moveTo(t.x, y + 4);
+      ctx.lineTo(t.x, y + LANE_H - 4);
+      ctx.stroke();
+    }
+  }, [visibleTicks, width, height]);
+
   function onMove(e: React.MouseEvent<SVGSVGElement>): void {
     const rect = e.currentTarget.getBoundingClientRect();
     const mx = e.clientX - rect.left;
@@ -135,7 +165,14 @@ export const ActionTimeline: React.FC<{ actions: ApiBansAction[] }> = ({ actions
                 stroke={theme.color.borderDim}
                 strokeWidth={1}
               />
-              <text x={g.x} y={height - 8} fill={theme.color.muted} fontSize={10} textAnchor="middle">
+              {/* The last label sits on the right edge: anchor its end there so it isn't clipped. */}
+              <text
+                x={g.x}
+                y={height - 8}
+                fill={theme.color.muted}
+                fontSize={10}
+                textAnchor={i === gridlines.length - 1 ? 'end' : 'middle'}
+              >
                 {g.label}
               </text>
             </g>
@@ -162,20 +199,9 @@ export const ActionTimeline: React.FC<{ actions: ApiBansAction[] }> = ({ actions
               />
             </g>
           ))}
-          {visibleTicks.map((t, i) => (
-            <line
-              key={`t${i}`}
-              x1={t.x}
-              y1={laneY(t.laneIdx) + 4}
-              x2={t.x}
-              y2={laneY(t.laneIdx) + LANE_H - 4}
-              stroke={t.color}
-              strokeWidth={2}
-              opacity={0.55}
-            />
-          ))}
-          {hover && <circle cx={hover.x} cy={hover.y} r={3} fill={theme.color.text} />}
         </svg>
+        <TickCanvas ref={canvasRef} style={{ width, height }} aria-hidden="true" />
+        {hover && <HoverDot style={{ left: hover.x, top: hover.y }} />}
 
         {hover && (
           <Tip style={{ left: Math.min(hover.x + 10, Math.max(width - 170, 0)), top: hover.y - 6 }}>
@@ -242,6 +268,23 @@ const SvgWrap = styled.div`
   position: relative;
   width: 100%;
   overflow-x: auto;
+`;
+// Above the SVG so ticks still draw over the gridlines; pointer-events: none
+// lets the SVG underneath keep handling hover.
+const TickCanvas = styled.canvas`
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+`;
+const HoverDot = styled.span`
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: ${theme.color.text};
+  pointer-events: none;
 `;
 const Tip = styled.div`
   position: absolute;

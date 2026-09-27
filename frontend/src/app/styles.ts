@@ -151,15 +151,30 @@ css`
     }
 
     /* Same shell as Window (Utils.isWeb() || Utils.isMobile()); fills viewport behind TopNav.
-       Fixed so the gradient spans the viewport instead of stretching over the
-       whole (long) document; the solid colour covers the first paint. */
+       The gradient sits on its own fixed, composited layer (the ::before) and
+       spans the viewport, not the whole (long) document. Not
+       background-attachment: fixed — that can't be composited, so the browser
+       repainted the full-viewport gradient stack on every scroll frame. The
+       body stays transparent so it doesn't cover the layer; html's solid
+       colour (index.html) covers the first paint. */
     body.web,
     body.mobile {
+      min-height: 100vh;
+    }
+    body.web::before,
+    body.mobile::before {
+      content: '';
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      z-index: -1;
+      pointer-events: none;
       background-color: var(--color-darkest-blue);
       background-image: var(--gradient-page);
-      background-attachment: fixed;
       background-blend-mode: normal, multiply, multiply, multiply;
-      min-height: 100vh;
+      will-change: transform;
     }
 
     /* Desktop-wallet host: clear the dark first-paint background inlined in
