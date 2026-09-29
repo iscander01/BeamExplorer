@@ -4475,6 +4475,11 @@ export const BeamExplorer: React.FC = () => {
   const [failure, setFailure] = useState<{ key: string; message: string } | null>(null);
   // For a chained hdrs fetch: which request we're on out of how many planned.
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  // Bumped to refetch the current request. The fetch effect is keyed on the
+  // request URL, so navigating to the same URL after a failure would otherwise
+  // leave the error on screen for good.
+  const [attempt, setAttempt] = useState(0);
+  const failedRef = useRef(false);
 
   // The URL is the single source of truth for the view; navigating just
   // rewrites the query string and the render follows.
@@ -4489,8 +4494,15 @@ export const BeamExplorer: React.FC = () => {
   viewRef.current = view;
   const setSearchParamsRef = useRef(setSearchParams);
   setSearchParamsRef.current = setSearchParams;
+  const viewSearchRef = useRef('');
+  viewSearchRef.current = new URLSearchParams(serializeView(view)).toString();
 
   const setView = useCallback((next: ViewState, opts?: GoOptions): void => {
+    // Same view again while the last request failed (re-submitting the search,
+    // clicking the same link): that is a retry, not a no-op.
+    if (failedRef.current && new URLSearchParams(serializeView(next)).toString() === viewSearchRef.current) {
+      setAttempt((n) => n + 1);
+    }
     setSearchParamsRef.current(serializeView(next), { replace: opts?.inPlace === true });
     if (opts?.inPlace !== true && typeof window !== 'undefined') {
       window.scrollTo({ top: 0, behavior: 'auto' });
@@ -4547,6 +4559,7 @@ export const BeamExplorer: React.FC = () => {
   const data = settled ? result.data : null;
   const error = failure !== null && failure.key === fetchKey ? failure.message : null;
   const loading = view.type !== 'historical' && requestUrl !== null && !settled && error === null;
+  failedRef.current = error !== null;
 
   useEffect(() => {
     const { current: view } = viewRef; // eslint-disable-line @typescript-eslint/no-shadow
@@ -4590,7 +4603,7 @@ export const BeamExplorer: React.FC = () => {
       });
 
     return () => controller.abort();
-  }, [fetchKey, go]);
+  }, [fetchKey, attempt, go]);
 
   const ctx: RenderCtx = useMemo(
     () => ({ go, network: view.network, viewType: view.type }),
@@ -4675,7 +4688,14 @@ export const BeamExplorer: React.FC = () => {
             }
           />
         )}
-        {error && <ErrorBox>Failed to load: {error}</ErrorBox>}
+        {error && (
+          <ErrorBox>
+            Failed to load: {error}{' '}
+            <Btn data-variant="ghost" type="button" onClick={() => setAttempt((n) => n + 1)}>
+              Retry
+            </Btn>
+          </ErrorBox>
+        )}
 
         {!loading && !error && (
           <>

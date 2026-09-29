@@ -32,7 +32,7 @@ const FAILED_RETRY_MS = 30_000;
 export type BlockUrlResolver = (height: number) => string | null;
 
 function defaultResolver(height: number): string {
-  return `${DEFAULT_EXPLORER_API}/block?height=${height}`;
+  return `${DEFAULT_EXPLORER_API}/block?height=${encodeURIComponent(String(height))}`;
 }
 
 function fmtTs(ts: number): string {

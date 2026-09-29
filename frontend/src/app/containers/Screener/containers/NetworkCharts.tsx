@@ -1319,7 +1319,12 @@ function useModalA11y(ref: React.RefObject<HTMLElement>, active: boolean): void 
     const opener = document.activeElement as HTMLElement | null;
     const root = document.documentElement;
     const prevOverflow = root.style.overflow;
+    const prevPaddingRight = root.style.paddingRight;
+    // Hiding the overflow removes a classic (non-overlay) scrollbar and the page
+    // behind the dialog would jump right by its width: pad the gap.
+    const scrollbar = window.innerWidth - root.clientWidth;
     root.style.overflow = 'hidden';
+    if (scrollbar > 0) root.style.paddingRight = `${scrollbar}px`;
     if (box) box.focus();
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Tab' || !box) return;
@@ -1349,6 +1354,7 @@ function useModalA11y(ref: React.RefObject<HTMLElement>, active: boolean): void 
     return () => {
       document.removeEventListener('keydown', onKey);
       root.style.overflow = prevOverflow;
+      root.style.paddingRight = prevPaddingRight;
       if (opener && document.contains(opener) && typeof opener.focus === 'function') opener.focus();
     };
   }, [ref, active]);

@@ -672,7 +672,7 @@ export const PairDetail: React.FC = () => {
   return (
     <Page>
       <AssetMetaBanner aid1={p.aid1} aid2={p.aid2} sym1={sym1} sym2={sym2} />
-      <LiquidityBanner id={dataId ?? ''} pair={p} />
+      <LiquidityBanner id={dataId ?? ''} pair={p} pending={!tierReady} />
       <Layout>
         <Left>
           <TopBar>

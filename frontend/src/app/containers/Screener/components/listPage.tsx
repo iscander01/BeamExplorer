@@ -67,7 +67,7 @@ export const MobileCard = styled.div<{ sideColumn?: boolean }>`
   &:hover {
     background: rgba(255, 255, 255, 0.05);
   }
-  /* Global styles strip the default outline, so keyboard focus needs its own. */
+  /* A plain :focus rule, so it also works in the wallet's Chrome 83, which lacks the global :focus-visible ring. */
   &:focus {
     border-color: rgba(0, 246, 210, 0.6);
   }

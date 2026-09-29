@@ -254,13 +254,16 @@ const supplyWord = (aid: number): string => (aid === 0 ? 'mined' : 'minted');
 interface Props {
   id: string;
   pair: ApiPair;
+  /** The selected fee tier's own stats are still loading, so `pair` is the
+   *  combined pool's: don't show its figures as if they were the tier's. */
+  pending?: boolean;
 }
 
 /** Expandable stats / Liquidity-Pools banner (BeamAssets Image #2). Collapsed it
  *  shows price + 24h volume + market cap + total liquidity; expanded it adds the
  *  pooled totals, the Pool History chart, the fee-tier row, and the paginated
  *  Liquidity-Providers (LP events) table. Scoped to the current pool. */
-export const LiquidityBanner: React.FC<Props> = ({ id, pair: p }) => {
+export const LiquidityBanner: React.FC<Props> = ({ id, pair: p, pending = false }) => {
   // Liquidity actions are wallet-only: shown inside the BEAM wallet, hidden on
   // the public web (isInsideWallet, surfaced as `inWallet`).
   const { inWallet } = useWallet();
@@ -365,20 +368,20 @@ export const LiquidityBanner: React.FC<Props> = ({ id, pair: p }) => {
           <span className="stat">
             <span className="k">Price</span>
             <span className="v">
-              {fmt$(p.price_usd)}
-              {beamPerToken != null && (
+              {pending ? '—' : fmt$(p.price_usd)}
+              {!pending && beamPerToken != null && (
                 <span className="native">
                   {fmtPrice(beamPerToken)} {sym1}
                 </span>
               )}
-              <span className={chg.cls === 'negative' ? 'neg' : 'pos'}>{chg.text}</span>
+              {!pending && <span className={chg.cls === 'negative' ? 'neg' : 'pos'}>{chg.text}</span>}
             </span>
           </span>
           <span className="stat">
             <span className="k">24H Volume</span>
             <span className="v">
-              {fmt$(p.volume_24h_usd)}
-              {volBeam != null && (
+              {pending ? '—' : fmt$(p.volume_24h_usd)}
+              {!pending && volBeam != null && (
                 <span className="native">
                   {fmtNum(volBeam, 0)} {sym1}
                 </span>
@@ -389,8 +392,8 @@ export const LiquidityBanner: React.FC<Props> = ({ id, pair: p }) => {
             <span className="stat">
               <span className="k">Market Cap</span>
               <span className="v">
-                {fmt$(mcUsd)}
-                {mcBeam != null && (
+                {pending ? '—' : fmt$(mcUsd)}
+                {!pending && mcBeam != null && (
                   <span className="native">
                     {fmtNum(mcBeam, 0)} {sym1}
                   </span>
@@ -401,8 +404,8 @@ export const LiquidityBanner: React.FC<Props> = ({ id, pair: p }) => {
           <span className="stat">
             <span className="k">Total Liquidity</span>
             <span className="v">
-              {fmt$(p.tvl_usd)}
-              {isBeamPair && p.reserve1_human != null && (
+              {pending ? '—' : fmt$(p.tvl_usd)}
+              {!pending && isBeamPair && p.reserve1_human != null && (
                 <span className="native">
                   {fmtNum(p.reserve1_human, 0)} {sym1}
                 </span>

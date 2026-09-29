@@ -591,7 +591,7 @@ function dappFilename(name: string | null, version: string | null): string {
 // Fastify route `/api/dapp/:cid` wraps it with a Content-Disposition header
 // so the browser handles the download natively.
 function dappDownloadUrl(cid: string, filename: string): string {
-  return apiUrl(`/dapp/${cid}?filename=${encodeURIComponent(filename)}`);
+  return apiUrl(`/dapp/${encodeURIComponent(cid)}?filename=${encodeURIComponent(filename)}`);
 }
 
 // ---------------------------------------------------------------------------

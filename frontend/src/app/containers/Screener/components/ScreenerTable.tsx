@@ -31,8 +31,9 @@ export const ScreenerTable = styled.table`
       background: rgba(255, 255, 255, 0.03);
     }
   }
-  /* Global styles strip the default outline, so keyboard focus needs its own
-     (rows and sortable headers are focusable via tabIndex). */
+  /* Keyboard focus for rows and sortable headers (focusable via tabIndex). Plain
+     :focus rules, so they also work in the wallet's Chrome 83, which lacks the
+     :focus-visible ring from the global styles. */
   tbody tr[tabindex]:focus {
     background: rgba(255, 255, 255, 0.06);
     box-shadow: inset 2px 0 0 var(--color-green);
