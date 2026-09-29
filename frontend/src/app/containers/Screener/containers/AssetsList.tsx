@@ -20,6 +20,7 @@ import {
   MobileCardSub as ACardSub,
   MobileCardStats as ACardStats,
   MobileCardStat as ACardStat,
+  activateOnKey,
 } from '../components/listPage';
 import { ScreenerTable } from '../components/ScreenerTable';
 
@@ -144,7 +145,7 @@ function supplyLabels(a: AssetEntry): { emission: string; max: string } {
 const AssetCard = React.memo(({ a, onOpen }: AssetRowProps) => {
   const supply = supplyLabels(a);
   return (
-    <ACard onClick={() => onOpen(a.aid)}>
+    <ACard role="link" tabIndex={0} onClick={() => onOpen(a.aid)} onKeyDown={activateOnKey(() => onOpen(a.aid))}>
       <RowAssetIcon asset_id={a.aid} color={a.color} />
       <ACardMain>
         <ACardTitleRow>
@@ -177,7 +178,13 @@ const AssetCard = React.memo(({ a, onOpen }: AssetRowProps) => {
 const AssetRow = React.memo(({ a, onOpen }: AssetRowProps) => {
   const supply = supplyLabels(a);
   return (
-    <tr onClick={() => onOpen(a.aid)}>
+    <tr
+      role="link"
+      tabIndex={0}
+      aria-label={a.short_name ?? `Asset #${a.aid}`}
+      onClick={() => onOpen(a.aid)}
+      onKeyDown={activateOnKey(() => onOpen(a.aid))}
+    >
       <td style={{ color: 'rgba(255,255,255,0.4)' }}>#{a.aid}</td>
       <td>
         <Cell>
@@ -243,16 +250,13 @@ export const AssetsList: React.FC = () => {
           onChange={(e) => setSearchInput(e.target.value)}
         />
         <ToggleBtn type="button" on={showImposters} onClick={() => setShowImposters((s) => !s)}>
-          {showImposters ? 'Hiding imposters' : 'Show imposters'}
+          {showImposters ? 'Hide imposters' : 'Show imposters'}
         </ToggleBtn>
       </Header>
 
       <TableWrap maxWidth={1100}>
         {error ? (
-          <CenteredNote>
-            Failed to load assets:
-            {error}
-          </CenteredNote>
+          <CenteredNote>Failed to load assets: {error}</CenteredNote>
         ) : loading && filtered.length === 0 ? (
           <Loading label="Loading assets…" />
         ) : filtered.length === 0 ? (

@@ -25,6 +25,8 @@ export const ROUTES = {
     PRIVACY: '/privacy',
     // explorer.beam.mw path shapes the BEAM desktop wallet links to.
     LEGACY_BLOCK: '/block',
+    LEGACY_BLOCK_HASH: '/block/:hash',
+    LEGACY_CONTRACT: '/contract/:cid',
     LEGACY_ASSET_DETAILS: '/assets/details/:id',
   },
 };

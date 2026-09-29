@@ -48,6 +48,19 @@ const COLOR2 = '#ffffff';
 
 export type SeriesVisibility = 'both' | '1' | '2';
 
+// Fraction digits for the axis and legend, chosen from the largest plotted
+// amount. Whole numbers are right for a pool holding millions, but a pool of a
+// high-value asset (0.25 wBTC) would read "0" at every tick. Below 100 the count
+// grows as the magnitude shrinks, so the leading digits always show; from 1000
+// up, fmtNum's K/M/B suffixes carry the scale.
+function precisionFor(max: number): number {
+  if (!(max > 0) || max >= 1000) return 0;
+  if (max >= 100) return 1;
+  if (max >= 10) return 2;
+  if (max >= 1) return 3;
+  return Math.min(8, 2 - Math.floor(Math.log10(max)));
+}
+
 interface Props {
   series: ApiPoolLiquidityPoint[];
   decimals1: number;
@@ -80,6 +93,9 @@ export const PoolHistoryChart: React.FC<Props> = ({
   const s2Ref = useRef<ISeriesApi<'Line'> | null>(null);
   // Keep latest derived points for the crosshair legend without re-creating the chart.
   const dataRef = useRef<{ d1: LineData[]; d2: LineData[] }>({ d1: [], d2: [] });
+  // Fraction digits currently in use — read by the crosshair legend, set with the
+  // data (see precisionFor).
+  const decRef = useRef(0);
 
   // Build once.
   useEffect(() => {
@@ -92,12 +108,12 @@ export const PoolHistoryChart: React.FC<Props> = ({
     s1Ref.current = chart.addLineSeries({
       color: COLOR1,
       lineWidth: 2,
-      priceFormat: { type: 'custom', formatter: (v: number) => fmtNum(v, 0), minMove: 1 },
+      priceFormat: { type: 'custom', formatter: (v: number) => fmtNum(v, decRef.current), minMove: 1 },
     });
     s2Ref.current = chart.addLineSeries({
       color: COLOR2,
       lineWidth: 2,
-      priceFormat: { type: 'custom', formatter: (v: number) => fmtNum(v, 0), minMove: 1 },
+      priceFormat: { type: 'custom', formatter: (v: number) => fmtNum(v, decRef.current), minMove: 1 },
     });
 
     // Legend: two coloured items, value filled on crosshair move.
@@ -134,8 +150,8 @@ export const PoolHistoryChart: React.FC<Props> = ({
       const t = param.time as UTCTimestamp;
       const p1 = dataRef.current.d1.find((p) => p.time === t);
       const p2 = dataRef.current.d2.find((p) => p.time === t);
-      nodes.v1.textContent = p1 ? fmtNum(p1.value, 0) : '';
-      nodes.v2.textContent = p2 ? fmtNum(p2.value, 0) : '';
+      nodes.v1.textContent = p1 ? fmtNum(p1.value, decRef.current) : '';
+      nodes.v2.textContent = p2 ? fmtNum(p2.value, decRef.current) : '';
     });
 
     return () => {
@@ -158,12 +174,27 @@ export const PoolHistoryChart: React.FC<Props> = ({
     const d1: LineData[] = series.map((p) => ({ time: p.ts as UTCTimestamp, value: Number(p.amount1) / div1 }));
     const d2: LineData[] = series.map((p) => ({ time: p.ts as UTCTimestamp, value: Number(p.amount2) / div2 }));
     dataRef.current = { d1, d2 };
+    // Precision follows what is plotted. Both series share one axis, so one
+    // count serves both; the formatters read it live, and minMove keeps the
+    // crosshair from snapping to steps coarser than the digits shown.
+    let max = 0;
+    for (const d of visible === '2' ? [] : d1) if (d.value > max) max = d.value;
+    for (const d of visible === '1' ? [] : d2) if (d.value > max) max = d.value;
+    decRef.current = precisionFor(max);
+    const priceFormat = {
+      type: 'custom' as const,
+      formatter: (v: number) => fmtNum(v, decRef.current),
+      minMove: 10 ** -decRef.current,
+    };
+    s1.applyOptions({ priceFormat });
+    s2.applyOptions({ priceFormat });
     s1.setData(visible === '2' ? [] : d1);
     s2.setData(visible === '1' ? [] : d2);
     // Each data load is a deliberate timeframe/source switch (the hook doesn't
     // poll), so refit to the new window. A subsequent centerOn overrides this.
     if (series.length > 0) chartRef.current?.timeScale().fitContent();
-  }, [series, decimals1, decimals2, visible]);
+    // sym1 / sym2: the create effect rebuilds the chart on a change, so refill it.
+  }, [series, decimals1, decimals2, visible, sym1, sym2]);
 
   // Center on a chosen date (±30 buckets, derived from average spacing).
   useEffect(() => {
@@ -190,7 +221,8 @@ export const PoolHistoryChart: React.FC<Props> = ({
     chart.priceScale('right').applyOptions({
       mode: logScale ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal,
     });
-  }, [logScale]);
+    // sym1 / sym2: re-apply to a chart the create effect rebuilt.
+  }, [logScale, sym1, sym2]);
 
   return (
     <ChartWrap h="320px">

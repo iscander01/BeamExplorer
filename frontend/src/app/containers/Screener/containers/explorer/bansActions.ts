@@ -51,6 +51,21 @@ export const CATEGORIES: CategoryMeta[] = [
   },
 ];
 
+// Pill tone for each category, matching its lane colour above (register accent,
+// list purple, extend info, transfer muted, delist danger, buy warn). Categories
+// with no lane read as neutral.
+export type BansTone = 'accent' | 'info' | 'warn' | 'purple' | 'danger' | 'neutral';
+export const CATEGORY_TONE: Record<BansCategory, BansTone> = {
+  register: 'accent',
+  list: 'purple',
+  extend: 'info',
+  transfer: 'neutral',
+  delist: 'danger',
+  buy: 'warn',
+  deploy: 'neutral',
+  other: 'neutral',
+};
+
 /** Map an explorer BANS method string to a category (single source of truth). */
 export function methodCategory(method: string): BansCategory {
   switch (method.trim().toLowerCase()) {

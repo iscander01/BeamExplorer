@@ -107,16 +107,36 @@ function shortKey(hex: string): string {
   return hex.length <= 20 ? hex : `${hex.slice(0, 8)}…${hex.slice(-8)}`;
 }
 
+const COPIED_MS = 1500;
+
 const CopyKey: React.FC<{ value: string }> = ({ value }) => {
   const [copied, setCopied] = React.useState(false);
+  const timerRef = React.useRef<number | null>(null);
+  // Don't leave a pending reset to fire after unmount.
+  React.useEffect(
+    () => () => {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    },
+    [],
+  );
+  const flash = (ok: boolean): void => {
+    setCopied(ok);
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    timerRef.current = ok
+      ? window.setTimeout(() => {
+          timerRef.current = null;
+          setCopied(false);
+        }, COPIED_MS)
+      : null;
+  };
   return (
     <CopyBtn
       type="button"
       title="Copy public key"
       onClick={() => {
         navigator.clipboard?.writeText(value).then(
-          () => setCopied(true),
-          () => setCopied(false),
+          () => flash(true),
+          () => flash(false),
         );
       }}
     >
@@ -168,12 +188,7 @@ export const Oracle: React.FC = () => {
         </Brand>
       </ExplorerHeader>
 
-      {error && (
-        <ErrorBox>
-          Failed to load the oracle:
-          {error}
-        </ErrorBox>
-      )}
+      {error && <ErrorBox>{`Failed to load the oracle: ${error}`}</ErrorBox>}
 
       <Panel>
         <PanelHead>Median feed value</PanelHead>

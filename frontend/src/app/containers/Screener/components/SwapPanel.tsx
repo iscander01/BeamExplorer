@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { styled } from '@linaria/react';
 import { AssetLabel } from '@app/shared/components/AssetLabel';
 import type { ApiPair, ApiPairTier } from '../api/types';
-import { fmt$, fmtPrice, fmtPriceImpact, toGroths, toGrothsStr, fromGroths } from './format';
+import { fmt$, fmtPrice, fmtPriceImpact, sanitizeAmount, toGrothsStr, fromGroths } from './format';
 import { Box, BoxHeader, Row, Input, TokenBadge, BadgeAssetIcon, InfoRow } from './amountBox';
 import { Btn, WalletHint, actionButtonState } from './modalChrome';
 import { useWallet, invokeTrade } from '../wallet';
@@ -242,7 +242,8 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
   useEffect(() => {
     if (headless) return undefined;
     const v = parseFloat(amountIn);
-    if (!Number.isFinite(v) || v <= 0) {
+    // Nothing to quote for an empty amount, or one below the asset's smallest unit.
+    if (!Number.isFinite(v) || v <= 0 || toGrothsStr(amountIn, pay.decimals) === '0') {
       setRawQuote(null);
       return undefined;
     }
@@ -256,7 +257,8 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
         //   callAid2 = the "pay" side  → callAid1 = the "receive" side
         const callAid1 = receive.aid;
         const callAid2 = pay.aid;
-        const val2_pay = toGroths(v, pay.decimals);
+        // Exact string math, so the quote is for the very amount `onSwap` sends.
+        const val2_pay = toGrothsStr(amountIn, pay.decimals);
         // Quote every candidate tier in parallel, then keep the highest `buy`
         // (exactly dex-app's findBestPool rule). Single-tier views quote once.
         const quotes = await Promise.all(
@@ -278,7 +280,7 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
               return {
                 kind: c.kind,
                 buy: r?.buy ?? 0,
-                pay: r?.pay ?? val2_pay,
+                pay: r?.pay ?? Number(val2_pay),
                 fee_dao: r?.fee_dao,
                 fee_pool: r?.fee_pool,
               };
@@ -286,7 +288,7 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
               return {
                 kind: c.kind,
                 buy: 0,
-                pay: val2_pay,
+                pay: Number(val2_pay),
                 fee_dao: undefined,
                 fee_pool: undefined,
               };
@@ -321,10 +323,16 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
 
   const flip = useCallback(() => {
     setDirection((d) => (d === 'buy_aid2' ? 'buy_aid1' : 'buy_aid2'));
-    setAmountIn(estimatedOut !== null ? estimatedOut.toFixed(6) : '');
+    // The old receive side becomes the pay side: fit the estimate to its decimals
+    // (and skip absurd values, whose toFixed would switch to exponent notation).
+    setAmountIn(
+      estimatedOut !== null && estimatedOut < 1e15
+        ? sanitizeAmount(estimatedOut.toFixed(Math.min(6, receive.decimals)), receive.decimals)
+        : '',
+    );
     setRawQuote(null);
     setFeedback(null);
-  }, [estimatedOut]);
+  }, [estimatedOut, receive.decimals]);
 
   const onSwap = useCallback(async () => {
     const v = parseFloat(amountIn);
@@ -430,7 +438,7 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
 
   // Button state machine.
   const v = parseFloat(amountIn);
-  const hasAmount = Number.isFinite(v) && v > 0;
+  const hasAmount = Number.isFinite(v) && v > 0 && toGrothsStr(amountIn, pay.decimals) !== '0';
   const btn = actionButtonState({
     feedback,
     headless,
@@ -461,10 +469,11 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
         <Row>
           <Input
             type="text"
+            aria-label={`Amount of ${pay.symbol} to pay`}
             inputMode="decimal"
             placeholder="0"
             value={amountIn}
-            onChange={(e) => setAmountIn(e.target.value.replace(/[^0-9.]/g, ''))}
+            onChange={(e) => setAmountIn(sanitizeAmount(e.target.value, pay.decimals))}
           />
           <TokenBadge>
             <BadgeAssetIcon asset_id={pay.aid} color={payColor} />
@@ -505,6 +514,7 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
         <Row>
           <Input
             type="text"
+            aria-label={`Estimated ${receive.symbol} to receive`}
             readOnly
             placeholder="0"
             value={

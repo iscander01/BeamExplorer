@@ -40,6 +40,9 @@ const panel = css`
   border-radius: 12px;
   overflow: hidden;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  /* Focusable (tabindex -1) so a click on a label or the padding keeps focus
+     inside the dialog; it is never a keyboard stop, so it needs no ring. */
+  outline: none;
 `;
 const input = css`
   width: 100%;
@@ -245,11 +248,30 @@ export const SearchOverlay: React.FC<Props> = ({ onClose }) => {
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   // Query an Enter was pressed on before its results arrived (see onKeyDown).
   const pendingEnter = useRef<string | null>(null);
 
+  // Focus moves into the input on open and goes back to whatever had it — the
+  // TopNav search button, or the page when opened with the shortcut — on close.
   useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
     inputRef.current?.focus();
+    return () => {
+      if (opener && opener !== document.body && document.body.contains(opener)) opener.focus();
+    };
+  }, []);
+
+  // Esc closes from anywhere: focus can sit on the panel itself, or on nothing
+  // at all, after a click on a non-focusable part of it.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const onEsc = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onCloseRef.current();
+    };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
   }, []);
 
   const query = value.trim();
@@ -327,8 +349,21 @@ export const SearchOverlay: React.FC<Props> = ({ onClose }) => {
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
+      if (e.key === 'Tab') {
+        // Trap Tab inside the dialog: the input and the result rows are its
+        // only tab stops, so wrap at both ends.
+        const stops = panelRef.current?.querySelectorAll<HTMLElement>('input, [tabindex="0"]');
+        if (!stops || stops.length === 0) return;
+        const first = stops[0]!;
+        const last = stops[stops.length - 1]!;
+        const at = document.activeElement;
+        if (e.shiftKey && (at === first || at === panelRef.current)) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && at === last) {
+          e.preventDefault();
+          first.focus();
+        }
         return;
       }
       if (e.key === 'ArrowDown') {
@@ -349,7 +384,7 @@ export const SearchOverlay: React.FC<Props> = ({ onClose }) => {
         }
       }
     },
-    [active, flat, fresh, query, openItem, onClose],
+    [active, flat, fresh, query, openItem],
   );
 
   let idx = -1;
@@ -359,10 +394,22 @@ export const SearchOverlay: React.FC<Props> = ({ onClose }) => {
 
   return (
     <div role="presentation" className={backdrop} onMouseDown={onClose}>
-      <div role="presentation" className={panel} onMouseDown={(e) => e.stopPropagation()} onKeyDown={onKeyDown}>
+      {/* The dialog itself handles keys for the input and rows inside it (arrows, Enter, Tab trap). */}
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Search"
+        tabIndex={-1}
+        className={panel}
+        onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={onKeyDown}
+      >
         <input
           ref={inputRef}
           className={input}
+          aria-label="Search blocks, assets, pairs, dapps, kernels and contracts"
           placeholder="Search blocks, assets, pairs, dapps, kernels, contracts…"
           value={value}
           onChange={(e) => setValue(e.target.value)}

@@ -4,8 +4,8 @@ import { AssetLabel } from '@app/shared/components/AssetLabel';
 import type { ApiPair } from '../api/types';
 import { useWallet, invokeAddLiquidity, invokeWithdraw, type LiquidityResult } from '../wallet';
 import { useAssetColor } from '../assetColors';
-import { fromGroths, toGrothsStr } from './format';
-import { Overlay, Card, CloseBtn, Btn, tierLabel, actionButtonState } from './modalChrome';
+import { fromGroths, sanitizeAmount, toGrothsStr } from './format';
+import { Modal, CloseBtn, Btn, WalletHint, tierLabel, actionButtonState } from './modalChrome';
 import { Box, BoxHeader, Row, Input, TokenBadge, BadgeAssetIcon, InfoRow } from './amountBox';
 
 // The AMM LP token ("AMML") is an 8-decimal groth asset, like BEAM. Token1/2
@@ -63,17 +63,8 @@ interface Props {
   onClose: () => void;
 }
 
-// Keep digits and a single decimal point — '1.2.3' must not display one value
-// while parseFloat submits another to the shader.
-const sanitize = (s: string): string => {
-  const cleaned = s.replace(/[^0-9.]/g, '');
-  const dot = cleaned.indexOf('.');
-  if (dot === -1) return cleaned;
-  return cleaned.slice(0, dot + 1) + cleaned.slice(dot + 1).replace(/\./g, '');
-};
-
 export const LiquidityModal: React.FC<Props> = ({ mode, pair, kind, reserve1Human, reserve2Human, onClose }) => {
-  const { headless, support, connecting, connect } = useWallet();
+  const { headless, support, connecting, connectFailed, connect } = useWallet();
 
   const { aid1 } = pair;
   const { aid2 } = pair;
@@ -272,123 +263,125 @@ export const LiquidityModal: React.FC<Props> = ({ mode, pair, kind, reserve1Huma
   const title = mode === 'withdraw' ? 'Withdraw Liquidity' : 'Add Liquidity';
 
   return (
-    <Overlay onClick={onClose}>
-      <Card onClick={(e) => e.stopPropagation()}>
-        <Head>
-          <h3>{title}</h3>
-          <CloseBtn type="button" aria-label="Close" onClick={onClose}>
-            ×
-          </CloseBtn>
-        </Head>
-        <Sub>
-          {sym1}
-          {` (${aid1}) / `}
-          {sym2}
-          {` (${aid2})`}
-          {' · '}
-          {tierLabel(kind)}
-        </Sub>
+    <Modal label={`${title}: ${sym1}/${sym2}, ${tierLabel(kind)}`} onClose={onClose}>
+      <Head>
+        <h3>{title}</h3>
+        <CloseBtn type="button" aria-label="Close" onClick={onClose}>
+          ×
+        </CloseBtn>
+      </Head>
+      <Sub>
+        {sym1}
+        {` (${aid1}) / `}
+        {sym2}
+        {` (${aid2})`}
+        {' · '}
+        {tierLabel(kind)}
+      </Sub>
 
-        {mode === 'add' && poolEmpty && <Hint>This pool is empty — deposit both tokens to set the initial price.</Hint>}
+      {mode === 'add' && poolEmpty && <Hint>This pool is empty — deposit both tokens to set the initial price.</Hint>}
 
-        {mode === 'withdraw' ? (
-          <>
-            <Box>
-              <BoxHeader>LP tokens to burn</BoxHeader>
-              <Row>
-                <Input
-                  type="text"
-                  inputMode="decimal"
-                  placeholder="0"
-                  value={lpAmount}
-                  onChange={(e) => {
-                    clearError();
-                    setLpAmount(sanitize(e.target.value));
-                  }}
-                />
-                <TokenBadge>LP</TokenBadge>
-              </Row>
-            </Box>
-            <InfoRow>
-              <span>You receive</span>
-              <span>{recv ? `${fmtAmt(recv.tok1)} ${sym1} (${aid1})` : '—'}</span>
-            </InfoRow>
-            <InfoRow>
-              <span>{' '}</span>
-              <span>{recv ? `${fmtAmt(recv.tok2)} ${sym2} (${aid2})` : '—'}</span>
-            </InfoRow>
-          </>
-        ) : (
-          <>
-            <Box>
-              <BoxHeader>{sym1}</BoxHeader>
-              <Row>
-                <Input
-                  type="text"
-                  inputMode="decimal"
-                  placeholder="0"
-                  value={amount1}
-                  onChange={(e) => {
-                    clearError();
-                    setLastEdited('1');
-                    setAmount1(sanitize(e.target.value));
-                  }}
-                />
-                <TokenBadge>
-                  <BadgeAssetIcon asset_id={aid1} color={color1} />
-                  <div>
-                    <AssetLabel aid={aid1} sym={sym1} />
-                  </div>
-                </TokenBadge>
-              </Row>
-            </Box>
-            <Box>
-              <BoxHeader>{sym2}</BoxHeader>
-              <Row>
-                <Input
-                  type="text"
-                  inputMode="decimal"
-                  placeholder="0"
-                  value={amount2}
-                  onChange={(e) => {
-                    clearError();
-                    setLastEdited('2');
-                    setAmount2(sanitize(e.target.value));
-                  }}
-                />
-                <TokenBadge>
-                  <BadgeAssetIcon asset_id={aid2} color={color2} />
-                  <div>
-                    <AssetLabel aid={aid2} sym={sym2} />
-                  </div>
-                </TokenBadge>
-              </Row>
-            </Box>
-            <InfoRow>
-              <span>You receive (est.)</span>
-              <span>{ctlEstimate !== null ? `${fmtAmt(fromGroths(ctlEstimate, LP_DECIMALS))} LP` : '—'}</span>
-            </InfoRow>
-          </>
-        )}
+      {mode === 'withdraw' ? (
+        <>
+          <Box>
+            <BoxHeader>LP tokens to burn</BoxHeader>
+            <Row>
+              <Input
+                type="text"
+                inputMode="decimal"
+                aria-label="LP tokens to burn"
+                placeholder="0"
+                value={lpAmount}
+                onChange={(e) => {
+                  clearError();
+                  setLpAmount(sanitizeAmount(e.target.value, LP_DECIMALS));
+                }}
+              />
+              <TokenBadge>LP</TokenBadge>
+            </Row>
+          </Box>
+          <InfoRow>
+            <span>You receive</span>
+            <span>{recv ? `${fmtAmt(recv.tok1)} ${sym1} (${aid1})` : '—'}</span>
+          </InfoRow>
+          <InfoRow>
+            <span>{' '}</span>
+            <span>{recv ? `${fmtAmt(recv.tok2)} ${sym2} (${aid2})` : '—'}</span>
+          </InfoRow>
+        </>
+      ) : (
+        <>
+          <Box>
+            <BoxHeader>{sym1}</BoxHeader>
+            <Row>
+              <Input
+                type="text"
+                inputMode="decimal"
+                aria-label={`Amount of ${sym1}`}
+                placeholder="0"
+                value={amount1}
+                onChange={(e) => {
+                  clearError();
+                  setLastEdited('1');
+                  setAmount1(sanitizeAmount(e.target.value, dec1));
+                }}
+              />
+              <TokenBadge>
+                <BadgeAssetIcon asset_id={aid1} color={color1} />
+                <div>
+                  <AssetLabel aid={aid1} sym={sym1} />
+                </div>
+              </TokenBadge>
+            </Row>
+          </Box>
+          <Box>
+            <BoxHeader>{sym2}</BoxHeader>
+            <Row>
+              <Input
+                type="text"
+                inputMode="decimal"
+                aria-label={`Amount of ${sym2}`}
+                placeholder="0"
+                value={amount2}
+                onChange={(e) => {
+                  clearError();
+                  setLastEdited('2');
+                  setAmount2(sanitizeAmount(e.target.value, dec2));
+                }}
+              />
+              <TokenBadge>
+                <BadgeAssetIcon asset_id={aid2} color={color2} />
+                <div>
+                  <AssetLabel aid={aid2} sym={sym2} />
+                </div>
+              </TokenBadge>
+            </Row>
+          </Box>
+          <InfoRow>
+            <span>You receive (est.)</span>
+            <span>{ctlEstimate !== null ? `${fmtAmt(fromGroths(ctlEstimate, LP_DECIMALS))} LP` : '—'}</span>
+          </InfoRow>
+        </>
+      )}
 
-        <Btn
-          type="button"
-          variant={btn.variant}
-          disabled={btn.disabled}
-          onClick={
-            headless
-              ? () => {
-                  void connect();
-                }
-              : () => {
-                  void execute();
-                }
-          }
-        >
-          {btn.text}
-        </Btn>
-      </Card>
-    </Overlay>
+      <Btn
+        type="button"
+        variant={btn.variant}
+        disabled={btn.disabled}
+        onClick={
+          headless
+            ? () => {
+                void connect();
+              }
+            : () => {
+                void execute();
+              }
+        }
+      >
+        {btn.text}
+      </Btn>
+      <WalletHint headless={headless} support={support} connecting={connecting} connectFailed={connectFailed} />
+    </Modal>
   );
 };
 

@@ -212,12 +212,7 @@ export const DaoProposal: React.FC = () => {
   return (
     <Page>
       <BackButton to={ROUTES.NAV.EXPLORER_DAO_GOVERNANCE} label="Governance" className={backSpacing} />
-      {error && (
-        <ErrorBox>
-          Failed to load proposal:
-          {error}
-        </ErrorBox>
-      )}
+      {error && <ErrorBox>{`Failed to load proposal: ${error}`}</ErrorBox>}
       {!p && !error && <Loading size="sm" />}
       {p && (
         <>
@@ -259,7 +254,7 @@ export const DaoProposal: React.FC = () => {
                   <VTop>
                     <span>{t.label}</span>
                     <span style={{ color: variantColor(t.variant) }}>
-                      {t.pct.toFixed(1)}% ·{fmtBeamx(t.stake)}
+                      {t.pct.toFixed(1)}% · {fmtBeamx(t.stake)}
                     </span>
                   </VTop>
                   <VTrack>
@@ -271,7 +266,7 @@ export const DaoProposal: React.FC = () => {
           </Panel>
 
           <Panel>
-            <PanelHead>Individual votes ·{total}</PanelHead>
+            <PanelHead>Individual votes · {total}</PanelHead>
             <ScrollX>
               <DataTable>
                 <thead>

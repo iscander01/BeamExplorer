@@ -193,9 +193,12 @@ export const SimpleChart: React.FC<Props> = ({
       overlayRef.current = null;
     };
     // Formatter is only honoured at construction time — re-create on change.
-    // logScale is applied via the dedicated effect below so we don't lose
-    // the data on every toggle. onChartReady is read through a ref so a
-    // caller passing a fresh callback identity doesn't trigger a rebuild.
+    // The log-mode, data and overlay effects below list `formatter` too, so a
+    // rebuild re-applies all three to the new chart (effects run in declaration
+    // order, and this one is first). logScale is applied via its dedicated
+    // effect so we don't lose the data on every toggle. onChartReady is read
+    // through a ref so a caller passing a fresh callback identity doesn't
+    // trigger a rebuild.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formatter]);
 
@@ -205,7 +208,8 @@ export const SimpleChart: React.FC<Props> = ({
     chart.priceScale('right').applyOptions({
       mode: logScale ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal,
     });
-  }, [logScale]);
+    // `formatter`: re-apply to the chart the create effect just rebuilt.
+  }, [logScale, formatter]);
 
   // NOTE: this MUST be a passive `useEffect`, not `useLayoutEffect`. The chart +
   // series are created in the passive create-effect above; a layout effect here
@@ -223,7 +227,8 @@ export const SimpleChart: React.FC<Props> = ({
     nonNegRef.current = allNonNegative(data); // floor the axis at 0 when all >= 0
     s.setData(data);
     if (data.length > 0) chart.timeScale().fitContent();
-  }, [series, scale]);
+    // `formatter`: refill the chart the create effect just rebuilt.
+  }, [series, scale, formatter]);
 
   // Optional overlay comparison line — created lazily on the same right axis,
   // updated on data/scale change, and removed if the prop clears. Mirrors the
@@ -251,7 +256,8 @@ export const SimpleChart: React.FC<Props> = ({
       chart.removeSeries(overlayRef.current);
       overlayRef.current = null;
     }
-  }, [overlaySeries, scale, overlayColor]);
+    // `formatter`: the rebuild dropped the overlay line; add it back.
+  }, [overlaySeries, scale, overlayColor, formatter]);
 
   return (
     <ChartWrap minH="220px">

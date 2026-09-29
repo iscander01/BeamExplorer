@@ -116,12 +116,7 @@ export const DaoRevenue: React.FC = () => {
         </div>
       </ExplorerHeader>
 
-      {error && (
-        <ErrorBox>
-          Failed to load revenue:
-          {error}
-        </ErrorBox>
-      )}
+      {error && <ErrorBox>{`Failed to load revenue: ${error}`}</ErrorBox>}
 
       <StatGrid>
         <StatCard>
@@ -155,7 +150,7 @@ export const DaoRevenue: React.FC = () => {
                 <span className="fill" style={{ width: `${Math.max(2, s.pct)}%`, background: srcColor(s.source, i) }} />
               </span>
               <span className="val">
-                {s.pct.toFixed(2)}% ·{fmtUsd(s.usd)}
+                {s.pct.toFixed(2)}% · {fmtUsd(s.usd)}
               </span>
             </HBar>
           ))}

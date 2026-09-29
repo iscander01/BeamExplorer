@@ -63,12 +63,7 @@ export const DaoOverview: React.FC = () => {
         </div>
       </ExplorerHeader>
 
-      {error && (
-        <ErrorBox>
-          Failed to load DAO overview:
-          {error}
-        </ErrorBox>
-      )}
+      {error && <ErrorBox>{`Failed to load DAO overview: ${error}`}</ErrorBox>}
 
       <Cards>
         <Link to={ROUTES.NAV.EXPLORER_DAO_TREASURY} className={hubCls}>

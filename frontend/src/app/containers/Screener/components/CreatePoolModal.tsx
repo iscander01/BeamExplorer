@@ -5,7 +5,7 @@ import type { ApiAssetListEntry } from '../api/types';
 import { useWallet, invokeCreatePool } from '../wallet';
 import { usePairs } from '../hooks';
 import { useSharedAssets } from '../assetColors';
-import { Overlay, Card, CloseBtn, Btn, FEE_TIERS, actionButtonState } from './modalChrome';
+import { Modal, CloseBtn, Btn, WalletHint, FEE_TIERS, actionButtonState } from './modalChrome';
 
 const Head = styled.div`
   display: flex;
@@ -134,7 +134,7 @@ export const CreatePoolModal: React.FC<Props> = ({
   lockPair = false,
   onClose,
 }) => {
-  const { headless, support, connecting, connect } = useWallet();
+  const { headless, support, connecting, connectFailed, connect } = useWallet();
   const { data } = useSharedAssets();
   const assets = useMemo(() => (data?.assets ?? []).slice().sort((a, b) => a.aid - b.aid), [data]);
 
@@ -232,77 +232,76 @@ export const CreatePoolModal: React.FC<Props> = ({
   });
 
   return (
-    <Overlay onClick={onClose}>
-      <Card onClick={(e) => e.stopPropagation()}>
-        <Head>
-          <h3>Create Pool</h3>
-          <CloseBtn type="button" aria-label="Close" onClick={onClose}>
-            ×
-          </CloseBtn>
-        </Head>
+    <Modal label="Create pool" onClose={onClose}>
+      <Head>
+        <h3>Create Pool</h3>
+        <CloseBtn type="button" aria-label="Close" onClick={onClose}>
+          ×
+        </CloseBtn>
+      </Head>
 
-        <AssetSelect
-          label="First asset"
-          value={aid1}
-          onChange={(v) => {
-            clearError();
-            setAid1(v);
-          }}
-          options={assets}
-          optionLabel={label}
-          locked={lockPair}
-        />
-        <AssetSelect
-          label="Second asset"
-          value={aid2}
-          onChange={(v) => {
-            clearError();
-            setAid2(v);
-          }}
-          options={assets}
-          optionLabel={label}
-          locked={lockPair}
-          error={sameAsset ? 'Pick two different assets.' : undefined}
-        />
+      <AssetSelect
+        label="First asset"
+        value={aid1}
+        onChange={(v) => {
+          clearError();
+          setAid1(v);
+        }}
+        options={assets}
+        optionLabel={label}
+        locked={lockPair}
+      />
+      <AssetSelect
+        label="Second asset"
+        value={aid2}
+        onChange={(v) => {
+          clearError();
+          setAid2(v);
+        }}
+        options={assets}
+        optionLabel={label}
+        locked={lockPair}
+        error={sameAsset ? 'Pick two different assets.' : undefined}
+      />
 
-        <Field>
-          <span className="fieldLabel">Fee tier</span>
-          <TierRow>
-            {FEE_TIERS.map((t) => (
-              <TierPill
-                key={t.kind}
-                type="button"
-                active={kind === t.kind}
-                onClick={() => {
-                  clearError();
-                  setKind(t.kind);
-                }}
-              >
-                {t.label}
-              </TierPill>
-            ))}
-          </TierRow>
-          {poolExists && <ErrMsg>This pool already exists — open it from the DEX list instead.</ErrMsg>}
-        </Field>
+      <Field>
+        <span className="fieldLabel">Fee tier</span>
+        <TierRow>
+          {FEE_TIERS.map((t) => (
+            <TierPill
+              key={t.kind}
+              type="button"
+              active={kind === t.kind}
+              onClick={() => {
+                clearError();
+                setKind(t.kind);
+              }}
+            >
+              {t.label}
+            </TierPill>
+          ))}
+        </TierRow>
+        {poolExists && <ErrMsg>This pool already exists — open it from the DEX list instead.</ErrMsg>}
+      </Field>
 
-        <Btn
-          type="button"
-          variant={btn.variant}
-          disabled={btn.disabled}
-          onClick={
-            headless
-              ? () => {
-                  void connect();
-                }
-              : () => {
-                  void create();
-                }
-          }
-        >
-          {btn.text}
-        </Btn>
-      </Card>
-    </Overlay>
+      <Btn
+        type="button"
+        variant={btn.variant}
+        disabled={btn.disabled}
+        onClick={
+          headless
+            ? () => {
+                void connect();
+              }
+            : () => {
+                void create();
+              }
+        }
+      >
+        {btn.text}
+      </Btn>
+      <WalletHint headless={headless} support={support} connecting={connecting} connectFailed={connectFailed} />
+    </Modal>
   );
 };
 

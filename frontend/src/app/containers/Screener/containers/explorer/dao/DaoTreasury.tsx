@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Loading } from '@app/shared/components/Loading';
 import { styled } from '@linaria/react';
 import AssetIcon, { useAssetColorResolver } from '@app/shared/components/AssetsIcon';
@@ -225,7 +225,7 @@ export const DaoTreasury: React.FC = () => {
   const { error } = treasury;
   const meta = useSharedAssetIndex();
   const [donut, setDonut] = useState(false);
-  const [hist, setHist] = useState<{ aid: number; data: ApiDaoAssetHistory | null } | null>(null);
+  const [hist, setHist] = useState<{ aid: number; data: ApiDaoAssetHistory | null; error: string | null } | null>(null);
   const closeHist = useCallback(() => setHist(null), []);
   const closeDonut = useCallback(() => setDonut(false), []);
   // The history modal stacks above the donut modal — it takes ESC precedence.
@@ -247,12 +247,19 @@ export const DaoTreasury: React.FC = () => {
   };
 
   const openAsset = (aid: number): void => {
-    setHist({ aid, data: null });
+    setHist({ aid, data: null, error: null });
     api
       .daoTreasuryAsset(aid)
-      .then((data) => setHist((cur) => (cur && cur.aid === aid ? { aid, data } : cur)))
-      .catch(() => {});
+      .then((data) => setHist((cur) => (cur && cur.aid === aid ? { aid, data, error: null } : cur)))
+      .catch((e: unknown) =>
+        setHist((cur) =>
+          cur && cur.aid === aid ? { aid, data: null, error: e instanceof Error ? e.message : String(e) } : cur,
+        ),
+      );
   };
+
+  // Memoized so TimeChart doesn't re-fit (reset pan/zoom) on unrelated re-renders.
+  const valueSeries = useMemo(() => (d?.value_series ?? []).map((s) => ({ label: s.day, value: s.usd })), [d]);
 
   const holdings = d?.holdings ?? [];
   const priced = holdings.filter((h) => h.value_usd != null);
@@ -307,12 +314,7 @@ export const DaoTreasury: React.FC = () => {
         </div>
       </ExplorerHeader>
 
-      {error && (
-        <ErrorBox>
-          Failed to load treasury:
-          {error}
-        </ErrorBox>
-      )}
+      {error && <ErrorBox>{`Failed to load treasury: ${error}`}</ErrorBox>}
 
       <StatGrid>
         <StatCard>
@@ -332,7 +334,7 @@ export const DaoTreasury: React.FC = () => {
       <Panel>
         <PanelHead>Treasury value over time (USD)</PanelHead>
         <div style={{ padding: '14px 16px' }}>
-          <TimeChart data={(d?.value_series ?? []).map((s) => ({ label: s.day, value: s.usd }))} fmtY={fmtUsd} />
+          <TimeChart data={valueSeries} fmtY={fmtUsd} />
         </div>
       </Panel>
 
@@ -425,8 +427,7 @@ export const DaoTreasury: React.FC = () => {
         {flows.length > FLOWS_PER_PAGE && (
           <Pagination>
             <PageInfo>
-              {flowStart + 1}–{Math.min(flowStart + FLOWS_PER_PAGE, flows.length)} of
-              {flows.length}
+              {flowStart + 1}–{Math.min(flowStart + FLOWS_PER_PAGE, flows.length)} of {flows.length}
             </PageInfo>
             <PageBtns>
               <Btn type="button" data-variant="ghost" disabled={safeFlowPage === 0} onClick={() => setFlowPage(0)}>
@@ -493,7 +494,7 @@ export const DaoTreasury: React.FC = () => {
                 />
                 {restPct > 0.0001 && (
                   <DonutNote>
-                    <span style={{ color: theme.color.muted2 }}>■</span> Other ={donutRest.length} assets ·{' '}
+                    <span style={{ color: theme.color.muted2 }}>■</span> Other = {donutRest.length} assets ·{' '}
                     {restPct.toFixed(2)}%
                   </DonutNote>
                 )}
@@ -516,7 +517,7 @@ export const DaoTreasury: React.FC = () => {
                       </b>
                     </span>
                     <span className="r">
-                      {h.pct.toFixed(2)}% ·{fmtAmt(h.amount, h.aid)} ·{fmtUsd(h.value_usd)}
+                      {h.pct.toFixed(2)}% · {fmtAmt(h.amount, h.aid)} · {fmtUsd(h.value_usd)}
                     </span>
                   </DLegendRow>
                 ))}
@@ -539,7 +540,14 @@ export const DaoTreasury: React.FC = () => {
                 ✕
               </Closer>
             </ModalHead>
-            {!hist.data ? (
+            {hist.error ? (
+              <div style={{ padding: 22 }}>
+                <ErrorBox>{`Failed to load deposit history: ${hist.error}`}</ErrorBox>
+                <Btn type="button" onClick={() => openAsset(hist.aid)}>
+                  Retry
+                </Btn>
+              </div>
+            ) : !hist.data ? (
               <Loading size="sm" />
             ) : (
               <>

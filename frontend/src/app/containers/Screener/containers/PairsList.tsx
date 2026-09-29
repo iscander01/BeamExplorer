@@ -26,6 +26,7 @@ import {
   MobileCardSub as CardSub,
   MobileCardStats as CardStats,
   MobileCardStat as CardStat,
+  activateOnKey,
 } from '../components/listPage';
 import { useFavorites } from '../favorites';
 import { CenteredNote } from '../components/CenteredNote';
@@ -36,6 +37,10 @@ import { CreatePoolModal } from '../components/CreatePoolModal';
 // from the AMM shader and only offered when a wallet is connected; the rest are
 // derived from the public pairs feed + localStorage favorites.
 type DexFilter = 'all' | 'mine' | 'liquid' | 'empty' | 'fav';
+
+// Column keys the list can sort by locally. `price` is the displayed USD price;
+// the rest are API SortKeys (only ever used client-side here).
+type ListSortKey = SortKey | 'price';
 
 const Header = styled.div`
   max-width: 1400px;
@@ -207,10 +212,10 @@ const StarButton = styled.button`
 `;
 
 interface SortableHeaderProps {
-  field: SortKey;
-  current: SortKey;
+  field: ListSortKey;
+  current: ListSortKey;
   order: SortOrder;
-  onSort: (field: SortKey) => void;
+  onSort: (field: ListSortKey) => void;
   children: React.ReactNode;
   className?: string;
 }
@@ -219,7 +224,13 @@ const SortableHeader: React.FC<SortableHeaderProps> = ({ field, current, order, 
   const isActive = field === current;
   const arrow = isActive ? (order === 'desc' ? ' ▼' : ' ▲') : '';
   return (
-    <th className={`${isActive ? 'sorted' : ''} ${className ?? ''}`} onClick={() => onSort(field)}>
+    <th
+      className={`${isActive ? 'sorted' : ''} ${className ?? ''}`}
+      tabIndex={0}
+      aria-sort={isActive ? (order === 'desc' ? 'descending' : 'ascending') : 'none'}
+      onClick={() => onSort(field)}
+      onKeyDown={activateOnKey(() => onSort(field))}
+    >
       {children}
       {arrow}
     </th>
@@ -246,9 +257,7 @@ const PairCard = React.memo(({ p, idx, fav, onOpen, onToggleFav }: PairRowProps)
       role="button"
       tabIndex={0}
       onClick={() => onOpen(pairKey(p.aid1, p.aid2))}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') onOpen(pairKey(p.aid1, p.aid2));
-      }}
+      onKeyDown={activateOnKey(() => onOpen(pairKey(p.aid1, p.aid2)))}
     >
       <IconsPair aid1={p.aid1} aid2={p.aid2} />
       <CardMain>
@@ -264,7 +273,7 @@ const PairCard = React.memo(({ p, idx, fav, onOpen, onToggleFav }: PairRowProps)
         <CardStats>
           <CardStat>
             <span>Price</span>
-            <span>{p.price_usd !== null ? fmt$(p.price_usd) : fmtPrice(p.price_native)}</span>
+            <span>{priceLabel(p)}</span>
           </CardStat>
           <CardStat>
             <span>24h</span>
@@ -314,12 +323,16 @@ const PairRow = React.memo(({ p, idx, fav, onOpen, onToggleFav }: PairRowProps) 
   const chg = fmtPct(p.price_change_24h);
   return (
     <tr
+      role="link"
+      tabIndex={0}
+      aria-label={`${p.symbol1 ?? `aid${p.aid1}`}/${p.symbol2 ?? `aid${p.aid2}`}`}
       onClick={(e) => {
         // The favorite star handles (and stops) its own clicks; ignore any
         // click that originated inside a button so cell padding stays inert.
         if ((e.target as HTMLElement).closest('button')) return;
         onOpen(pairKey(p.aid1, p.aid2));
       }}
+      onKeyDown={activateOnKey(() => onOpen(pairKey(p.aid1, p.aid2)))}
     >
       <td>
         <StarButton
@@ -348,7 +361,7 @@ const PairRow = React.memo(({ p, idx, fav, onOpen, onToggleFav }: PairRowProps) 
       <td>
         <TiersBadge kinds={p.tiers?.map((t) => t.kind) ?? [p.kind]} />
       </td>
-      <td className="mono">{p.price_usd !== null ? fmt$(p.price_usd) : fmtPrice(p.price_native)}</td>
+      <td className="mono">{priceLabel(p)}</td>
       <td className={chg.cls}>{chg.text}</td>
       <td className="mono">
         {p.trades_24h} <span className="positive">{p.buys_24h}</span>/<span className="negative">{p.sells_24h}</span>
@@ -364,26 +377,58 @@ const PairRow = React.memo(({ p, idx, fav, onOpen, onToggleFav }: PairRowProps) 
   );
 });
 
-function sortValue(p: ApiPair, key: SortKey): number {
+// The Price column shows the price of aid2. Without a USD price it falls back to
+// aid2's price in aid1 — the inverse of `price_native` (aid2 per aid1), which is
+// also what the row's sparkline and PairDetail's "Price sym1" show.
+function priceLabel(p: ApiPair): string {
+  if (p.price_usd != null) return fmt$(p.price_usd);
+  const native = p.price_native;
+  if (native == null || !Number.isFinite(native) || native <= 0) return '—';
+  return `${fmtPrice(1 / native)} ${p.symbol1 ?? `aid${p.aid1}`}`;
+}
+
+// Sort value for a column; null = no data, which sorts last in either direction.
+// `price` is the displayed USD price, so rows that only have the native fallback
+// (different unit, not comparable) sort last too.
+function sortValue(p: ApiPair, key: ListSortKey): number | null {
+  let v: number | null | undefined;
   switch (key) {
     case 'tvl_usd':
-      return p.tvl_usd ?? -Infinity;
+      v = p.tvl_usd;
+      break;
     case 'volume_24h_usd':
-      return p.volume_24h_usd ?? -Infinity;
+      v = p.volume_24h_usd;
+      break;
     case 'price_change_24h':
-      return p.price_change_24h ?? -Infinity;
+      v = p.price_change_24h;
+      break;
     case 'trades_24h':
-      return p.trades_24h;
+      v = p.trades_24h;
+      break;
+    case 'price':
+      v = p.price_usd;
+      break;
     case 'aid2':
-      return p.aid2;
+      v = p.aid2;
+      break;
     default:
-      return -Infinity;
+      v = null;
   }
+  return v != null && Number.isFinite(v) ? v : null;
+}
+
+// True when any tier of the pair holds reserves. Deliberately not `tvl_usd`: a
+// pool can hold liquidity yet have no USD price (so tvl_usd is null/0).
+function hasLiquidity(p: ApiPair): boolean {
+  if ((p.tvl_usd ?? 0) > 0 || (p.reserve1_human ?? 0) > 0 || (p.reserve2_human ?? 0) > 0) return true;
+  return (p.tiers ?? []).some(
+    (t) => (t.tvl_usd ?? 0) > 0 || (t.reserve1_human ?? 0) > 0 || (t.reserve2_human ?? 0) > 0,
+  );
 }
 
 export const PairsList: React.FC = () => {
   const navigate = useNavigate();
-  const [sortBy, setSortBy] = useState<SortKey>('tvl_usd');
+  const [sortBy, setSortBy] = useState<ListSortKey>('tvl_usd');
   const [order, setOrder] = useState<SortOrder>('desc');
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -434,7 +479,7 @@ export const PairsList: React.FC = () => {
     ),
   );
 
-  const onSort = (field: SortKey): void => {
+  const onSort = (field: ListSortKey): void => {
     if (field === sortBy) {
       setOrder(order === 'desc' ? 'asc' : 'desc');
     } else {
@@ -446,9 +491,14 @@ export const PairsList: React.FC = () => {
   const pairs = useMemo<ApiPair[]>(() => {
     const sign = order === 'asc' ? 1 : -1;
     // Nulls sort last in either direction, like the API's own ordering.
-    return [...(data?.pairs ?? [])].sort(
-      (a, b) => (sortValue(a, sortBy) - sortValue(b, sortBy)) * sign || a.aid2 - b.aid2 || a.aid1 - b.aid1,
-    );
+    return [...(data?.pairs ?? [])].sort((a, b) => {
+      const va = sortValue(a, sortBy);
+      const vb = sortValue(b, sortBy);
+      if (va === null && vb !== null) return 1;
+      if (vb === null && va !== null) return -1;
+      const byValue = va !== null && vb !== null ? (va - vb) * sign : 0;
+      return byValue || a.aid2 - b.aid2 || a.aid1 - b.aid1;
+    });
   }, [data, sortBy, order]);
 
   const filtered = useMemo(() => {
@@ -456,9 +506,9 @@ export const PairsList: React.FC = () => {
       case 'mine':
         return pairs.filter((p) => createdKeys.has(pairKey(p.aid1, p.aid2)));
       case 'liquid':
-        return pairs.filter((p) => p.tvl_usd != null && p.tvl_usd > 0);
+        return pairs.filter(hasLiquidity);
       case 'empty':
-        return pairs.filter((p) => !p.tvl_usd);
+        return pairs.filter((p) => !hasLiquidity(p));
       case 'fav':
         return pairs.filter((p) => favorites.has(pairKey(p.aid1, p.aid2)));
       default:
@@ -515,10 +565,7 @@ export const PairsList: React.FC = () => {
       </FilterBar>
       <TableWrap>
         {error ? (
-          <CenteredNote>
-            Failed to load pairs:
-            {error}
-          </CenteredNote>
+          <CenteredNote>Failed to load pairs: {error}</CenteredNote>
         ) : loading && pairs.length === 0 ? (
           <Loading label="Loading pairs…" />
         ) : filtered.length === 0 ? (
@@ -562,7 +609,7 @@ export const PairsList: React.FC = () => {
                     <th style={{ width: 40 }}>#</th>
                     <th>Pair</th>
                     <th style={{ width: 60 }}>Tier</th>
-                    <SortableHeader field="aid2" current={sortBy} order={order} onSort={onSort}>
+                    <SortableHeader field="price" current={sortBy} order={order} onSort={onSort}>
                       Price
                     </SortableHeader>
                     <SortableHeader field="price_change_24h" current={sortBy} order={order} onSort={onSort}>

@@ -31,6 +31,15 @@ export const ScreenerTable = styled.table`
       background: rgba(255, 255, 255, 0.03);
     }
   }
+  /* Global styles strip the default outline, so keyboard focus needs its own
+     (rows and sortable headers are focusable via tabIndex). */
+  tbody tr[tabindex]:focus {
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: inset 2px 0 0 var(--color-green);
+  }
+  th[tabindex]:focus {
+    color: var(--color-green);
+  }
   .mono {
     font-family: var(--font-mono);
   }

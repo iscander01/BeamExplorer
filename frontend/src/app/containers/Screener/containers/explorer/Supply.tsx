@@ -191,27 +191,29 @@ export const Supply: React.FC = () => {
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<Record<string, ISeriesApi<'Line'> | null>>({});
   const dataRef = useRef<ChartData | null>(null);
+  // Bumped by every chain lookup (the initial status fetch and each manual
+  // check) and on unmount. A response only applies while it is still the latest
+  // lookup, so a slow earlier one can't overwrite a newer height.
+  const lookupGenRef = useRef(0);
 
   // Initial load + URL-style auto-update from status endpoint.
   useEffect(() => {
-    let cancelled = false;
+    lookupGenRef.current += 1;
+    const gen = lookupGenRef.current;
     (async () => {
       try {
         const res = await fetch(`${EXPLORER_API}/status?exp_am=1`);
         const data = (await res.json()) as Record<string, unknown>;
-        if (cancelled) return;
+        if (gen !== lookupGenRef.current) return;
         const h =
           parseExplorerNumber(data.height) ?? parseExplorerNumber(data.h) ?? extractStatusMetric(data, 'Height') ?? 0;
         setHeight(h);
         setChain(parseChainFromExplorerResponse(data));
         setExpected(expectedSupplyFast(h));
       } catch {
-        if (!cancelled) setHeight(0);
+        if (gen === lookupGenRef.current) setHeight(0);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   // Build chart when height changes.
@@ -298,6 +300,7 @@ export const Supply: React.FC = () => {
   // every time the Supply page is navigated away from.
   useEffect(
     () => () => {
+      lookupGenRef.current += 1;
       chartRef.current?.remove();
       chartRef.current = null;
     },
@@ -380,10 +383,13 @@ export const Supply: React.FC = () => {
     const a = parseFloat(manualActual);
     if (!Number.isFinite(h) || h < 0) return;
     setManualOverride(Number.isFinite(a) ? a : null);
+    lookupGenRef.current += 1;
+    const gen = lookupGenRef.current;
     (async () => {
       try {
         const res = await fetch(`${EXPLORER_API}/block?height=${h}&exp_am=1`);
         const data = (await res.json()) as Record<string, unknown>;
+        if (gen !== lookupGenRef.current) return;
         setHeight(h);
         setExpected(expectedSupplyFast(h));
         if (data.found === false) {
@@ -392,6 +398,7 @@ export const Supply: React.FC = () => {
           setChain(parseChainFromExplorerResponse(data));
         }
       } catch {
+        if (gen !== lookupGenRef.current) return;
         setHeight(h);
         setExpected(expectedSupplyFast(h));
         setChain({ total: null, miner: null, treasury: null });
@@ -521,8 +528,7 @@ export const Supply: React.FC = () => {
                         <div>
                           {fmtInt(b.block_range[0])}
                           <br />
-                          to
-                          {fmtInt(b.block_range[1])}
+                          to {fmtInt(b.block_range[1])}
                         </div>
                       )}
                     </td>

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Loading } from '@app/shared/components/Loading';
 import { styled } from '@linaria/react';
 import AssetsSwapGlyph from '@app/shared/icons/icon-assets-swap.svg';
@@ -13,6 +13,7 @@ import {
   Subtitle,
   Muted,
   TabBtn,
+  Btn,
   Pill,
   DataTable,
   ScrollX,
@@ -91,20 +92,39 @@ export const AssetSwaps: React.FC = () => {
   // aid → label/decimals/colour from the app-wide catalogue poll.
   const assetIndex = useSharedAssetIndex();
 
+  // Bumped per request, on tab change and on unmount: switching Open/All quickly
+  // leaves the earlier request in flight, and only the newest may write state.
+  const genRef = useRef(0);
   const refresh = useCallback(async () => {
+    genRef.current += 1;
+    const gen = genRef.current;
     try {
       const a = await api.assetSwaps(tab === 'all' ? { include: 'all' } : {});
+      if (gen !== genRef.current) return;
       setOffers(a.offers);
       setErr(null);
     } catch (e) {
+      if (gen !== genRef.current) return;
       // wallet-api may be unreachable / disabled in this deployment.
       setErr(e instanceof Error ? e.message : String(e));
     }
   }, [tab]);
 
   useEffect(() => {
+    // A new tab starts from scratch, so the other tab's list is never shown
+    // under this tab's label while its request is pending (or after it fails).
+    setOffers(null);
+    setErr(null);
     void refresh();
+    return () => {
+      genRef.current += 1;
+    };
   }, [refresh]);
+
+  const retry = (): void => {
+    setErr(null);
+    void refresh();
+  };
 
   function labelForAid(aid: number, fallback: string | null): string | null {
     const a = assetIndex.get(aid);
@@ -176,7 +196,13 @@ export const AssetSwaps: React.FC = () => {
           </ErrorBox>
         ) : null}
         {offers === null ? (
-          <Loading size="sm" />
+          err ? (
+            <Btn type="button" onClick={retry}>
+              Retry
+            </Btn>
+          ) : (
+            <Loading size="sm" />
+          )
         ) : offers.length === 0 ? (
           <EmptyState>
             <EmptyIcon>

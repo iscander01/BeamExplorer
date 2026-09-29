@@ -12,6 +12,7 @@ import {
   Subtitle,
   Muted,
   TabBtn,
+  Btn,
   Pill,
   DataTable,
   ScrollX,
@@ -31,6 +32,7 @@ import DiscordIcon from './shared/icons/social-discord.svg';
 import LinkedinIcon from './shared/icons/social-linkedin.svg';
 import InstagramIcon from './shared/icons/social-instagram.svg';
 import WebsiteIcon from './shared/icons/social-website.svg';
+import { fixMojibake } from './fixMojibake';
 
 // ---------------------------------------------------------------------------
 // /dapps — directory of dapps published to the BEAM DApp Store registry
@@ -56,6 +58,16 @@ const CATEGORY_LABEL: Record<number, string> = {
   4: 'Technology',
   5: 'Governance',
 };
+
+// Label for a dapp's category, or null when there is nothing worth showing:
+// unset, or 0 ("Undefined" in beam-ui — the publisher never picked one).
+function categoryLabel(category: number | null | undefined): string | null {
+  if (category == null || category === 0) return null;
+  return CATEGORY_LABEL[category] ?? `#${category}`;
+}
+
+// API-supplied DApp text sometimes arrives as UTF-8 read as cp1252 ("â€”").
+const cleanText = (s: string | null | undefined): string | null => (s == null ? null : fixMojibake(s));
 
 const ACTION_LABEL: Record<number, string> = {
   0: 'CreatePublisher',
@@ -537,14 +549,21 @@ const DATA_URI_RE = /^data:image\/(png|jpeg|jpg|gif|webp);base64,([A-Za-z0-9+/=]
 
 function safeIconSrc(raw: string | null | undefined): string | undefined {
   if (!raw) return undefined;
-  const httpish = safeHttpUrl(raw);
-  if (httpish) return httpish;
   const m = raw.match(DATA_URI_RE);
   if (m) return `data:image/${m[1].toLowerCase()};base64,${m[2]}`;
+  // Checked before the URL branch: a bare base64 string has no scheme, so
+  // safeHttpUrl would happily read it as a hostname ("https://iVBORw0K…").
   if (raw.length > 16 && raw.length < 200_000 && RAW_BASE64_RE.test(raw)) {
     return `data:image/png;base64,${raw}`;
   }
-  return undefined;
+  const httpish = safeHttpUrl(raw);
+  if (!httpish) return undefined;
+  // A plain-http icon on an https page is blocked as mixed content anyway; skip
+  // it rather than leave a broken image (and never fetch it over http).
+  if (httpish.startsWith('http:') && typeof window !== 'undefined' && window.location.protocol === 'https:') {
+    return undefined;
+  }
+  return httpish;
 }
 
 // Filename for the downloaded .dapp bundle. Allow alphanumerics, dot, dash,
@@ -582,7 +601,16 @@ function dappDownloadUrl(cid: string, filename: string): string {
 const DappIcon: React.FC<{ icon: string | null; size?: 'sm' | 'md' }> = ({ icon, size = 'md' }) => {
   const src = safeIconSrc(icon);
   const Wrapper = size === 'sm' ? Icon32 : Icon48;
-  return <Wrapper>{src ? <img src={src} alt="" loading="lazy" /> : <span aria-hidden>🧩</span>}</Wrapper>;
+  return (
+    <Wrapper>
+      {src ? (
+        // No referrer: icons load from hosts the publisher picked.
+        <img src={src} alt="" loading="lazy" referrerPolicy="no-referrer" />
+      ) : (
+        <span aria-hidden>🧩</span>
+      )}
+    </Wrapper>
+  );
 };
 
 const CopyKey: React.FC<{ value: string; onCopy: (msg: string) => void; show?: 'full' | 'short' }> = ({
@@ -868,9 +896,7 @@ const PublisherModal: React.FC<{
                           </>
                         ) : null}
                       </td>
-                      <td className="muted">
-                        {d.category != null ? CATEGORY_LABEL[d.category] ?? `#${d.category}` : '—'}
-                      </td>
+                      <td className="muted">{categoryLabel(d.category) ?? '—'}</td>
                       <td className="mono">v{d.version ?? '—'}</td>
                       <td>
                         <RelDate iso={d.last_updated_at} />
@@ -916,10 +942,10 @@ const DappModal: React.FC<{
         <ModalHeader>
           <DappIcon icon={dapp.icon} />
           <div style={{ flex: 1, minWidth: 0 }}>
-            <H1 style={{ fontSize: 18 }}>{dapp.name ?? 'Untitled dapp'}</H1>
+            <H1 style={{ fontSize: 18 }}>{cleanText(dapp.name) ?? 'Untitled dapp'}</H1>
             <Subtitle>
               v{dapp.version ?? '—'}
-              {dapp.category != null ? <> ·{CATEGORY_LABEL[dapp.category] ?? `#${dapp.category}`}</> : null}
+              {categoryLabel(dapp.category) ? <> · {categoryLabel(dapp.category)}</> : null}
               {dapp.deleted_at ? (
                 <>
                   {' '}
@@ -935,7 +961,7 @@ const DappModal: React.FC<{
           {dapp.description ? (
             <Field>
               <FieldLabel>Description</FieldLabel>
-              <div style={{ whiteSpace: 'pre-wrap' }}>{dapp.description}</div>
+              <div style={{ whiteSpace: 'pre-wrap' }}>{cleanText(dapp.description)}</div>
             </Field>
           ) : null}
 
@@ -973,10 +999,7 @@ const DappModal: React.FC<{
             <Field>
               <FieldLabel>API version</FieldLabel>
               <Mono>{dapp.api_version ?? '—'}</Mono>
-              <Muted style={{ margin: '2px 0 0', fontSize: 10 }}>
-                min:
-                {dapp.min_api_version ?? '—'}
-              </Muted>
+              <Muted style={{ margin: '2px 0 0', fontSize: 10 }}>min: {dapp.min_api_version ?? '—'}</Muted>
             </Field>
           </FieldRow>
 
@@ -1058,9 +1081,20 @@ const DappModal: React.FC<{
 // Page
 // ---------------------------------------------------------------------------
 
+// First-load placeholder: the spinner while the request is in flight, a retry
+// button once it has failed (the error itself is shown above the list).
+const LoadOrRetry: React.FC<{ failed: boolean; onRetry: () => void }> = ({ failed, onRetry }) =>
+  failed ? (
+    <Btn type="button" onClick={onRetry}>
+      Retry
+    </Btn>
+  ) : (
+    <Loading size="sm" />
+  );
+
 export const Dapps: React.FC = () => {
   const [tab, setTab] = useState<Tab>('dapps');
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   useEffect(() => {
     const tabParam = searchParams.get('tab');
@@ -1136,14 +1170,33 @@ export const Dapps: React.FC = () => {
     };
   }, [openDapp]);
 
+  // The deep-link params (?dapp= / ?publisher=) open a modal when the lists
+  // load; they have to go when that modal is closed or swapped, or the next poll
+  // that refreshes the lists would open it again. replace, not push, so Back
+  // doesn't step through them.
+  const clearParams = useCallback(
+    (...keys: string[]) => {
+      if (!keys.some((k) => searchParams.has(k))) return;
+      const next = new URLSearchParams(searchParams);
+      keys.forEach((k) => next.delete(k));
+      setSearchParams(next, { replace: true });
+    },
+    [searchParams, setSearchParams],
+  );
+  const closeDapp = useCallback(() => {
+    setOpenDapp(null);
+    clearParams('dapp');
+  }, [clearParams]);
+  const closePublisher = useCallback(() => {
+    setOpenPublisher(null);
+    clearParams('publisher');
+  }, [clearParams]);
+
   // ESC closes whichever modal is open (dapp wins over publisher).
   const closeTopmost = useCallback(() => {
-    setOpenDapp((cur) => {
-      if (cur) return null;
-      setOpenPublisher(null);
-      return cur;
-    });
-  }, []);
+    if (openDapp) closeDapp();
+    else closePublisher();
+  }, [openDapp, closeDapp, closePublisher]);
   useEscapeClose(closeTopmost, Boolean(openDapp || openPublisher));
 
   const publishersByKey = useMemo(() => {
@@ -1174,7 +1227,7 @@ export const Dapps: React.FC = () => {
 
         {tab === 'dapps' &&
           (dapps === null ? (
-            <Loading size="sm" />
+            <LoadOrRetry failed={err !== null} onRetry={feed.refetch} />
           ) : dapps.length === 0 ? (
             <Muted>No dapps registered yet.</Muted>
           ) : (
@@ -1183,8 +1236,8 @@ export const Dapps: React.FC = () => {
                 <DappCard id={`dapp-${d.id}`} key={d.id} type="button" onClick={() => setOpenDapp(d)}>
                   <DappIcon icon={d.icon} />
                   <CardBody>
-                    <CardName>{d.name ?? `Dapp ${shortKey(d.id)}`}</CardName>
-                    <CardDesc>{d.description ?? ' '}</CardDesc>
+                    <CardName>{cleanText(d.name) ?? `Dapp ${shortKey(d.id)}`}</CardName>
+                    <CardDesc>{cleanText(d.description) ?? ' '}</CardDesc>
                     <CardMeta>
                       <PublisherChip
                         onClick={(e) => {
@@ -1197,7 +1250,7 @@ export const Dapps: React.FC = () => {
                         {d.publisher.name ?? shortKey(d.publisher.pubkey)}
                       </PublisherChip>
                       <span>v{d.version ?? '—'}</span>
-                      {d.category != null ? <span>·{CATEGORY_LABEL[d.category] ?? `#${d.category}`}</span> : null}
+                      {categoryLabel(d.category) ? <span>· {categoryLabel(d.category)}</span> : null}
                       <span>
                         · <RelDate iso={d.last_updated_at} />
                       </span>
@@ -1211,7 +1264,7 @@ export const Dapps: React.FC = () => {
 
         {tab === 'publishers' &&
           (publishers === null ? (
-            <Loading size="sm" />
+            <LoadOrRetry failed={err !== null} onRetry={feed.refetch} />
           ) : publishers.length === 0 ? (
             <Muted>No publishers registered yet.</Muted>
           ) : (
@@ -1269,13 +1322,14 @@ export const Dapps: React.FC = () => {
           detail={openDappDetail}
           loading={dappDetailLoading}
           err={dappDetailErr}
-          onClose={() => setOpenDapp(null)}
+          onClose={closeDapp}
           onCopy={showToast}
           onPickPublisher={(pubkey) => {
             const p = publishersByKey.get(pubkey);
             if (p) {
               setOpenDapp(null);
               setOpenPublisher(p);
+              clearParams('dapp', 'publisher');
             }
           }}
         />
@@ -1283,11 +1337,12 @@ export const Dapps: React.FC = () => {
         <PublisherModal
           publisher={openPublisher}
           dapps={dapps ?? []}
-          onClose={() => setOpenPublisher(null)}
+          onClose={closePublisher}
           onCopy={showToast}
           onPickDapp={(d) => {
             setOpenPublisher(null);
             setOpenDapp(d);
+            clearParams('dapp', 'publisher');
           }}
         />
       ) : null}

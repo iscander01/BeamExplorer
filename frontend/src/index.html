@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
     <meta name="theme-color" content="#032e49" />
     <!-- Dark first paint before styles.css/JS arrive; the wallet host clears it via html.desktop in styles.ts. -->
     <style>html{background:#032e49}</style>
@@ -13,14 +13,17 @@
       serves this page for any path, so move the path into the hash — and reload
       from the root, because the bundle tags below are relative: under
       /assets/details/7 they would resolve to /assets/details/index.<hash>.js
-      and the app would never boot.
+      and the app would never boot. That holds when the URL already carries a
+      fragment (/pair/0_31#x) too, so the path wins and the old fragment is
+      dropped (a second # would end up inside the router path). The target
+      always starts with /#, so it can never leave this origin.
       Skip real files (*.html): inside the wallet the page loads at
       /<guid>/app/index.html and must keep that path.
     -->
     <script>
       (function () {
         var l = window.location;
-        if (l.pathname !== '/' && !/\.html$/.test(l.pathname) && !l.hash) {
+        if (l.pathname !== '/' && !/\.html$/.test(l.pathname)) {
           l.replace('/#' + l.pathname + l.search);
         }
       })();
@@ -36,16 +39,17 @@
     <meta property="og:site_name" content="Beam Explorer" />
     <meta property="og:title" content="Beam Explorer — block explorer and DEX analytics for BEAM" />
     <meta property="og:description" content="Open block explorer and DEX analytics for the Beam network." />
-    <meta property="og:image" content="https://beamterminal.0xmx.net/og/site.svg" />
+    <meta property="og:image" content="https://explorer.beam.mw/og-image.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:url" content="https://beamterminal.0xmx.net" />
+    <meta property="og:url" content="https://explorer.beam.mw" />
 
     <!-- Twitter Cards -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Beam Explorer — block explorer and DEX analytics for BEAM" />
     <meta name="twitter:description" content="Open block explorer and DEX analytics for the Beam network." />
-    <meta name="twitter:image" content="https://beamterminal.0xmx.net/og/site.svg" />
+    <meta name="twitter:image" content="https://explorer.beam.mw/og-image.jpg" />
 
     <!-- html-webpack-plugin injects the hashed styles.css/index.js tags. -->
   </head>

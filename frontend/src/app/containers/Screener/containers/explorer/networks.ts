@@ -35,3 +35,13 @@ export const explorerNodes: Record<string, NetworkConfig> = {
     url: ['https://explorer.0xmx.net/api/warp_dev3/'],
   },
 };
+
+/**
+ * True when `name` is a network we have an explorer node for. An own-property
+ * check, not `explorerNodes[name]`: a `?network=constructor` or `__proto__`
+ * would otherwise resolve to an Object.prototype member and get past a
+ * truthiness test.
+ */
+export function isExplorerNetwork(name: string | null | undefined): boolean {
+  return !!name && Object.prototype.hasOwnProperty.call(explorerNodes, name);
+}

@@ -1,0 +1,10 @@
+# Sourced by the nginx image's entrypoint before 20-envsubst-on-templates.sh
+# renders nginx.conf.template, so it can use ${LISTEN_IPV6}. Add the IPv6
+# listener only when the kernel has IPv6: `listen [::]:PORT` on a host without
+# it aborts nginx at startup ("Address family not supported by protocol"),
+# and the official image's own IPv6 script never touches our rendered file.
+if [ -s /proc/net/if_inet6 ]; then
+  export LISTEN_IPV6="listen [::]:${PORT};"
+else
+  export LISTEN_IPV6=""
+fi

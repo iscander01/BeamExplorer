@@ -79,12 +79,17 @@ const PageHeader = styled.div`
   -webkit-box-pack: justify;
   justify-content: space-between;
   flex-wrap: wrap;
-  grid-gap: 12px;
-  /* The button is taller than the heading, so the row owns the vertical
-     spacing instead of the H2's own margin. */
-  margin: 4px 0 16px;
+  /* No grid-gap: it does nothing on a flex container in Chrome 83 (the wallet).
+     Each child carries 6px above and below instead, so when the button wraps
+     under the heading the two never touch; the container's negative top and
+     reduced bottom margin keep the row's outer spacing at 4px / 16px. */
+  margin: -2px 0 10px;
+  > * {
+    margin-top: 6px;
+    margin-bottom: 6px;
+  }
   > h2 {
-    margin: 0;
+    margin: 6px 0;
   }
 `;
 
@@ -307,14 +312,8 @@ const HashrateCell: React.FC<{
                   }
                 >
                   <div>{fmtTooltipDate(series[hoverIdx].ts)}</div>
-                  <div>
-                    Hashrate:
-                    {fmtHashrate(series[hoverIdx].value)}
-                  </div>
-                  <div>
-                    Average:
-                    {fmtHashrate(avg)}
-                  </div>
+                  <div>Hashrate: {fmtHashrate(series[hoverIdx].value)}</div>
+                  <div>Average: {fmtHashrate(avg)}</div>
                 </SparkTooltip>
               </>
             )}
@@ -740,42 +739,32 @@ export const Mining: React.FC = () => {
             Network hashrate: <strong>{fmtHashrate(network)}</strong>
             {blockHt != null && (
               <span style={{ marginLeft: 12 }}>
-                Block:
-                <strong>{blockHt.toLocaleString()}</strong>
+                Block: <strong>{blockHt.toLocaleString()}</strong>
               </span>
             )}
             {difficulty != null && (
               <span style={{ marginLeft: 12 }}>
-                Diff:
-                <strong>{fmtDifficulty(difficulty)}</strong>
+                Diff: <strong>{fmtDifficulty(difficulty)}</strong>
               </span>
             )}
             {avgBlockTime != null && (
               <span style={{ marginLeft: 12 }}>
-                Avg block:
-                <strong>{avgBlockTime.toFixed(1)}s</strong>
+                Avg block: <strong>{avgBlockTime.toFixed(1)}s</strong>
               </span>
             )}
             {totalMiners != null && (
               <span style={{ marginLeft: 12 }}>
-                Miners:
-                <strong>{totalMiners.toLocaleString()}</strong>
+                Miners: <strong>{totalMiners.toLocaleString()}</strong>
               </span>
             )}
             {totalWorkers != null && (
               <span style={{ marginLeft: 12 }}>
-                Workers:
-                <strong>{totalWorkers.toLocaleString()}</strong>
+                Workers: <strong>{totalWorkers.toLocaleString()}</strong>
               </span>
             )}
           </NetInfo>
         </HeaderStrip>
-        {poolErr && (
-          <Muted>
-            Could not load pool data:
-            {poolErr}
-          </Muted>
-        )}
+        {poolErr && <Muted>{`Could not load pool data: ${poolErr}`}</Muted>}
         {sorted.length === 0 && !poolErr && <Loading size="sm" label="Loading pool data…" />}
         {sorted.length > 0 && (
           <TableScroll>
@@ -939,11 +928,13 @@ export const Mining: React.FC = () => {
       <Card>
         <H2>Recent Blocks</H2>
         {!blocksLoaded && <Loading size="sm" label="Loading recent blocks…" />}
-        {blocksLoaded && (blocksError || blocks.length === 0) ? (
-          <Muted>Recent blocks unavailable.</Muted>
-        ) : (
-          blocksLoaded && (
-            <>
+        {blocksLoaded && blockData === null && <Muted>Recent blocks unavailable.</Muted>}
+        {blocksLoaded && blockData !== null && (
+          <>
+            {blocksError && <Muted>Could not refresh recent blocks — showing the last data loaded.</Muted>}
+            {blocks.length === 0 ? (
+              <Muted>{blockPage === 0 ? 'No recent blocks.' : 'No blocks on this page.'}</Muted>
+            ) : (
               <TableScroll>
                 <DataTable>
                   <thead>
@@ -984,20 +975,17 @@ export const Mining: React.FC = () => {
                   </tbody>
                 </DataTable>
               </TableScroll>
-              <div className={pagerCss}>
-                <Btn type="button" disabled={blockPage === 0} onClick={() => setBlockPage((p) => Math.max(0, p - 1))}>
-                  &#8592; Newer
-                </Btn>
-                <span>
-                  Page
-                  {blockPage + 1}
-                </span>
-                <Btn type="button" disabled={!hasNext} onClick={() => setBlockPage((p) => p + 1)}>
-                  Older &#8594;
-                </Btn>
-              </div>
-            </>
-          )
+            )}
+            <div className={pagerCss}>
+              <Btn type="button" disabled={blockPage === 0} onClick={() => setBlockPage((p) => Math.max(0, p - 1))}>
+                &#8592; Newer
+              </Btn>
+              <span>Page {blockPage + 1}</span>
+              <Btn type="button" disabled={!hasNext} onClick={() => setBlockPage((p) => p + 1)}>
+                Older &#8594;
+              </Btn>
+            </div>
+          </>
         )}
       </Card>
 

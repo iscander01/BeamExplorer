@@ -533,7 +533,11 @@ export const LiquidityPosition: React.FC = () => {
 
   const persistBookmarks = (next: Bookmark[]): void => {
     setBookmarks(next);
-    localStorage.setItem(BM_KEY, JSON.stringify(next));
+    try {
+      localStorage.setItem(BM_KEY, JSON.stringify(next));
+    } catch {
+      /* localStorage unavailable (private mode / quota) — keep the in-memory list only. */
+    }
   };
 
   const currentRef = (searchParams.get('search') ?? input).trim();
@@ -628,9 +632,8 @@ export const LiquidityPosition: React.FC = () => {
 
       <Hints>
         Paste the <b>Kernel ID</b> (64 hex characters) or the <b>block height</b> of each of your <i>Liquidity Add</i>{' '}
-        and
-        <i>Liquidity Withdraw</i> transactions — both are in your BEAM wallet&apos;s transaction details, or on a Beam
-        block explorer. List as many as you like, separated by commas, spaces or new lines; adds and removes can be
+        and <i>Liquidity Withdraw</i> transactions — both are in your BEAM wallet&apos;s transaction details, or on a
+        Beam block explorer. List as many as you like, separated by commas, spaces or new lines; adds and removes can be
         mixed.
         <div className="ex">
           <span>Examples:</span>
@@ -644,9 +647,7 @@ export const LiquidityPosition: React.FC = () => {
       {error && <Message data-err="1">{error}</Message>}
       {unresolved.length > 0 && (
         <Message>
-          Couldn&apos;t resolve
-          {unresolved.length} reference(s):
-          {unresolved.join(', ')}
+          Couldn&apos;t resolve {unresolved.length} reference(s): {unresolved.join(', ')}
         </Message>
       )}
 
@@ -655,7 +656,7 @@ export const LiquidityPosition: React.FC = () => {
           <Label>Pool:</Label>
           {pools.map((p) => (
             <PickerBtn key={p.lp_token} active={p.lp_token === selectedLp} onClick={() => void selectPool(p.lp_token)}>
-              {assetName(p.aid1, p.symbol1)} /{assetName(p.aid2, p.symbol2)}
+              {assetName(p.aid1, p.symbol1)} / {assetName(p.aid2, p.symbol2)}
               <small>
                 {p.kind_label} · {p.events.length} op
                 {p.events.length > 1 ? 's' : ''}
@@ -834,40 +835,28 @@ const Result: React.FC<ResultProps> = ({
               <Value>{new Date(agg.firstAddTs * 1000).toISOString().replace('T', ' ').slice(0, 19)} UTC</Value>
             </Row>
             <Row sep>
-              <Label>
-                Total deposited
-                {n1}
-              </Label>
+              <Label>Total deposited {n1}</Label>
               <Value>
                 {fmtAmount(agg.totalDep1)}
                 <small>{n1}</small>
               </Value>
             </Row>
             <Row>
-              <Label>
-                Total deposited
-                {n2}
-              </Label>
+              <Label>Total deposited {n2}</Label>
               <Value>
                 {fmtAmount(agg.totalDep2)}
                 <small>{n2}</small>
               </Value>
             </Row>
             <Row sep>
-              <Label>
-                Remaining basis
-                {n1}
-              </Label>
+              <Label>Remaining basis {n1}</Label>
               <Value>
                 {fmtAmount(m.a1i)}
                 <small>{n1}</small>
               </Value>
             </Row>
             <Row>
-              <Label>
-                Remaining basis
-                {n2}
-              </Label>
+              <Label>Remaining basis {n2}</Label>
               <Value>
                 {fmtAmount(m.a2i)}
                 <small>{n2}</small>
@@ -898,20 +887,14 @@ const Result: React.FC<ResultProps> = ({
               </Value>
             </Row>
             <Row>
-              <Label>
-                Total
-                {n1}
-              </Label>
+              <Label>Total {n1}</Label>
               <Value>
                 {fmtAmount(m.a1p)}
                 <small>{n1}</small>
               </Value>
             </Row>
             <Row>
-              <Label>
-                Total
-                {n2}
-              </Label>
+              <Label>Total {n2}</Label>
               <Value>
                 {fmtAmount(m.a2p)}
                 <small>{n2}</small>
@@ -935,10 +918,7 @@ const Result: React.FC<ResultProps> = ({
               <Value>{fmtPct(m.share, 4).replace('+', '')}</Value>
             </Row>
             <Row sep>
-              <Label>
-                Principal
-                {n1}
-              </Label>
+              <Label>Principal {n1}</Label>
               <Value>
                 {fmtAmount(m.aid1Principal)}
                 <small>{n1}</small>
@@ -965,10 +945,7 @@ const Result: React.FC<ResultProps> = ({
               </Value>
             </Row>
             <Row sep>
-              <Label>
-                Principal
-                {n2}
-              </Label>
+              <Label>Principal {n2}</Label>
               <Value>
                 {fmtAmount(m.aid2Principal)}
                 <small>{n2}</small>
@@ -1000,10 +977,7 @@ const Result: React.FC<ResultProps> = ({
           <Card>
             <CardHead>
               <CardTitle>Remaining P&amp;L (unrealized)</CardTitle>
-              <SwapBtn onClick={() => setPnlUnit(flip(pnlUnit))}>
-                in
-                {pnlUnit === 1 ? n1 : n2} ⇄
-              </SwapBtn>
+              <SwapBtn onClick={() => setPnlUnit(flip(pnlUnit))}>in {pnlUnit === 1 ? n1 : n2} ⇄</SwapBtn>
             </CardHead>
             {(() => {
               const pnl = computePnl(m, pnlUnit);
@@ -1062,10 +1036,7 @@ const Result: React.FC<ResultProps> = ({
           <WideCard>
             <CardHead>
               <CardTitle>Hypotheticals (remaining position)</CardTitle>
-              <SwapBtn onClick={() => setHypoUnit(flip(hypoUnit))}>
-                in
-                {hypoUnit === 1 ? n1 : n2} ⇄
-              </SwapBtn>
+              <SwapBtn onClick={() => setHypoUnit(flip(hypoUnit))}>in {hypoUnit === 1 ? n1 : n2} ⇄</SwapBtn>
             </CardHead>
             {(() => {
               const hypo = computeHypo(m, hypoUnit);
@@ -1094,10 +1065,7 @@ const Result: React.FC<ResultProps> = ({
                     </Value>
                   </Row>
                   <Row sep>
-                    <Label>
-                      2. If HODL all in
-                      {n1}
-                    </Label>
+                    <Label>2. If HODL all in {n1}</Label>
                     <Value>
                       {fmtAmount(hypo.allA1)}
                       <small>{u}</small>
@@ -1111,10 +1079,7 @@ const Result: React.FC<ResultProps> = ({
                     </Value>
                   </Row>
                   <Row sep>
-                    <Label>
-                      3. If HODL all in
-                      {n2}
-                    </Label>
+                    <Label>3. If HODL all in {n2}</Label>
                     <Value>
                       {fmtAmount(hypo.allA2)}
                       <small>{u}</small>
@@ -1149,8 +1114,7 @@ const Result: React.FC<ResultProps> = ({
                   </Tab>
                 </Tabs>
                 <SwapBtn style={{ marginLeft: 8 }} onClick={() => setAnalyticsUnit(flip(analyticsUnit))}>
-                  in
-                  {analyticsUnit === 1 ? n1 : n2} ⇄
+                  in {analyticsUnit === 1 ? n1 : n2} ⇄
                 </SwapBtn>
               </div>
             </CardHead>
@@ -1177,7 +1141,9 @@ const Result: React.FC<ResultProps> = ({
         </Grid>
       ) : (
         <Message>
-          This position is fully withdrawn (nothing remains in the pool), so only the realized P&amp;L above applies.
+          {agg.netCtl > 0
+            ? 'The remaining position can’t be analysed: the pool’s current state is empty or incomplete.'
+            : 'This position is fully withdrawn (nothing remains in the pool), so only the realized P&L above applies.'}
         </Message>
       )}
     </>

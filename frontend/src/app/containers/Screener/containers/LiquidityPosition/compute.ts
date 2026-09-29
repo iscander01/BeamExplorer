@@ -35,7 +35,7 @@ export interface Metrics {
   // Current pool reserves, human units.
   a1p: number;
   a2p: number;
-  /** LP held / total LP supply, in [0, 1]. */
+  /** LP held / total LP supply, in [0, 1] (capped at 1). */
   share: number;
   // Prices (value of 1 unit of the "X in Y" asset).
   p2in1init: number; // aid2 priced in aid1, at deposit
@@ -52,14 +52,23 @@ export interface Metrics {
   durationMs: number;
 }
 
-export function computeMetrics(p: PositionInput): Metrics {
+/** Null when the inputs can't describe a position: the pool is empty or has no
+ *  LP supply, or the deposit has a zero side. Nothing downstream may divide by
+ *  those, so no NaN/Infinity ever reaches the charts. */
+export function computeMetrics(p: PositionInput): Metrics | null {
   const a1i = fromGroths(p.amount1, p.decimals1);
   const a2i = fromGroths(p.amount2, p.decimals2);
   const a1p = fromGroths(p.reserve1, p.decimals1);
   const a2p = fromGroths(p.reserve2, p.decimals2);
   // Decimals cancel in the LP-token ratio, so raw groths are fine (and avoid a
   // dependency on the LP token's own decimals).
-  const share = Number(p.amountCtl) / Number(p.ctlSupply);
+  const ctlSupply = Number(p.ctlSupply);
+  const held = Number(p.amountCtl);
+  if (!(ctlSupply > 0) || !Number.isFinite(held) || held < 0) return null;
+  // Can't hold more than the whole supply; a ratio above 1 means the inputs
+  // are out of step (e.g. a stale snapshot), so cap rather than overstate.
+  const share = Math.min(1, held / ctlSupply);
+  if (!(a1i > 0 && a2i > 0 && a1p > 0 && a2p > 0)) return null;
 
   const p2in1init = a1i / a2i;
   const p1in2init = a2i / a1i;
@@ -445,7 +454,7 @@ export function aggregate(inp: AggInput): Aggregate {
   const curR1 = w1(inp.reserve1);
   const curR2 = w2(inp.reserve2);
   const curCtl = Number(inp.ctlSupply);
-  const remShare = curCtl > 0 ? netCtl / curCtl : 0;
+  const remShare = curCtl > 0 ? Math.min(1, netCtl / curCtl) : 0;
   const rem1 = curR1 * remShare;
   const rem2 = curR2 * remShare;
 

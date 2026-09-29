@@ -1,30 +1,43 @@
 # Railway: static server for the frontend bundle. Data comes from the public
 # BeamTerminal API — the bundle calls https://beamterminal.0xmx.net/api
 # directly from the browser (open CORS), so there is nothing to proxy here.
-# Cache rules mirror ../nginx.conf. Rendered by the nginx image's envsubst:
-# only ${PORT} is substituted; nginx's own $variables pass through.
+# Cache rules mirror ../nginx.conf. Rendered by the nginx image's envsubst,
+# which replaces only ${NAME} references to environment variables (PORT, and
+# LISTEN_IPV6 from 15-listen-ipv6.envsh); nginx's own $variables pass through.
 
 server {
   listen ${PORT};
-  listen [::]:${PORT};
+  # `listen [::]:PORT;` when the host has IPv6, empty otherwise.
+  ${LISTEN_IPV6}
+
+  server_tokens off;
+  include /etc/nginx/snippets/security-headers.conf;
 
   root /usr/share/nginx/html;
   index index.html;
 
   # SPA: any path serves index.html, whose head script moves the path into the
   # hash (HashRouter) — /explorer/charts, /block?kernel_id=…, /assets/details/7.
+  #
+  # Everything not matched below — the wasm files, favicon.svg, logo.svg,
+  # wasm-client.js/.worker.js — is not content-hashed, so it must revalidate
+  # (nginx sends an ETag) or a changed file would be served stale.
   location / {
     try_files $uri $uri/ /index.html;
+    add_header Cache-Control "no-cache";
+    include /etc/nginx/snippets/security-headers.conf;
   }
 
   # index.html references content-hashed assets, so it must always revalidate.
   location = /index.html {
     add_header Cache-Control "no-cache";
+    include /etc/nginx/snippets/security-headers.conf;
   }
 
   # Content-hashed JS/CSS never changes under the same name — cache forever.
   location ~* "\.[0-9a-f]{8}\.(js|css)$" {
     add_header Cache-Control "public, max-age=31536000, immutable";
+    include /etc/nginx/snippets/security-headers.conf;
   }
 
   gzip on;

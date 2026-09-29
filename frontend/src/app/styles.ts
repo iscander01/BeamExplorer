@@ -121,6 +121,22 @@ css`
 
     * {
       box-sizing: border-box;
+    }
+
+    /* Keyboard focus ring. Its own block on purpose: :focus-visible is Chrome
+       86+, and in a selector list it would invalidate the whole rule in the
+       wallet (Chrome 83). Components that draw their own focus state override
+       it with a more specific selector. */
+    :focus-visible {
+      outline: 2px solid var(--color-green);
+      outline-offset: 2px;
+    }
+
+    /* Text fields show focus with their own border/shadow, and :focus-visible
+       matches them on mouse focus too — no ring there. */
+    input:focus,
+    textarea:focus,
+    select:focus {
       outline: none;
     }
     html {

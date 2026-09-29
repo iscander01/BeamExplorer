@@ -43,10 +43,19 @@ const SPLITS = new Set<string>(['none', 'direction', 'bridge']);
  * The expanded chart described by `sp`, or null when no chart is linked.
  * `log` defaults per chart rather than globally — the Black Hole chart opens
  * logarithmic — so the caller passes the chart's own default in.
+ *
+ * `isKnownKey` closes the vocabulary on the chart itself: a `chart` value the
+ * page has no chart for (a stale link, a typo, `toString`) parses to null —
+ * "no chart linked" — instead of reaching the component's keyed lookups.
  */
-export function parseChartLink(sp: URLSearchParams, logDefault = false): ChartLink | null {
+export function parseChartLink(
+  sp: URLSearchParams,
+  logDefault = false,
+  isKnownKey?: (key: string) => boolean,
+): ChartLink | null {
   const key = sp.get('chart');
   if (!key) return null;
+  if (isKnownKey && !isKnownKey(key)) return null;
 
   const tf = sp.get('tf');
   const iv = sp.get('iv');

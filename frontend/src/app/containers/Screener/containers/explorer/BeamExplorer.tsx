@@ -34,7 +34,7 @@ import { Overlay, CloseBtn, useEscapeClose } from '../../components/modalChrome'
 import { compact } from '../../components/format';
 import { buildHdrsCsv, buildHdrsSvg } from './hdrs-chart/hdrsExport';
 import type { HdrsExportRow, HdrsSvgModel } from './hdrs-chart/hdrsExport';
-import { explorerNodes } from './networks';
+import { explorerNodes, isExplorerNetwork } from './networks';
 
 // Version of the explorer front end, tracking the upstream standalone
 // BeamExplorer.htm (github.com/BeamMW/beam/tree/master/explorer/htm) that this
@@ -168,7 +168,14 @@ const RANGE_PARAM_KEYS = ['hMin', 'hMax', 'nMaxTxs', 'nMaxOps'] as const;
 function parseView(sp: URLSearchParams): ViewState {
   const rawType = sp.get('type') ?? '';
   const type = (VIEW_TYPES.has(rawType) ? rawType : 'status') as ViewType;
-  const view: ViewState = { network: sp.get('network') || 'mainnet', type };
+  // An unknown network would leave the dropdown, the status text and the data
+  // (which quietly comes from the mainnet node) naming different networks, so
+  // it reads as mainnet everywhere.
+  const rawNetwork = sp.get('network');
+  const view: ViewState = {
+    network: rawNetwork !== null && isExplorerNetwork(rawNetwork) ? rawNetwork : 'mainnet',
+    type,
+  };
   for (const k of VIEW_PARAM_KEYS) {
     const v = sp.get(k);
     if (v !== null) view[k] = v;
@@ -386,11 +393,11 @@ const columnHeaders: Record<string, ColumnMeta> = {
 // ---------------------------------------------------------------------------
 
 function readNetworkType(network: string): 'PoW' | 'PoS' {
-  return explorerNodes[network]?.type ?? 'PoW';
+  return isExplorerNetwork(network) ? explorerNodes[network]!.type : 'PoW';
 }
 
 function getNodeUrl(network: string): string {
-  return explorerNodes[network]?.url[0] ?? explorerNodes.mainnet.url[0];
+  return isExplorerNetwork(network) ? explorerNodes[network]!.url[0]! : explorerNodes.mainnet!.url[0]!;
 }
 
 // The explorer caps every /hdrs request at 2048 rows
@@ -444,7 +451,7 @@ function buildRequestUrl(view: ViewState): string | null {
   switch (view.type) {
     case 'asset':
       if (!view.id || view.id === '0') return null;
-      suffix += `&id=${encodeURIComponent(view.id)}&nMaxOps=${view.nMaxOps || 100}`;
+      suffix += `&id=${encodeURIComponent(view.id)}&nMaxOps=${encodeURIComponent(view.nMaxOps || 100)}`;
       if (view.hMin) suffix += `&hMin=${encodeURIComponent(view.hMin)}`;
       if (view.hMax) suffix += `&hMax=${encodeURIComponent(view.hMax)}`;
       break;
@@ -461,13 +468,14 @@ function buildRequestUrl(view: ViewState): string | null {
       break;
     case 'contract':
       if (!view.id) return null;
-      suffix += `&id=${encodeURIComponent(view.id)}&nMaxTxs=${view.nMaxTxs || 100}`;
+      suffix += `&id=${encodeURIComponent(view.id)}&nMaxTxs=${encodeURIComponent(view.nMaxTxs || 100)}`;
       if (view.hMin) suffix += `&hMin=${encodeURIComponent(view.hMin)}`;
       if (view.hMax) suffix += `&hMax=${encodeURIComponent(view.hMax)}`;
       break;
     case 'hdrs': {
       const cols = view.cols || COLUMN_DEFAULT_DISPLAY;
-      suffix += `&cols=${cols}&nMax=${view.nMax || 100}&dh=${view.dh || 1}`;
+      suffix += `&cols=${encodeURIComponent(cols)}&nMax=${encodeURIComponent(view.nMax || 100)}`;
+      suffix += `&dh=${encodeURIComponent(view.dh || 1)}`;
       if (view.hMax) suffix += `&hMax=${encodeURIComponent(view.hMax)}`;
       break;
     }
@@ -1282,6 +1290,25 @@ function FilterTable<T>({
                     data-sortable={sortable ? '' : undefined}
                     onClick={sortable ? () => toggleSort(ci) : undefined}
                     title={sortable ? 'Sort column' : undefined}
+                    // Keyboard-operable like a button. The header keeps its
+                    // columnheader role — aria-sort is only valid there — and
+                    // focus only lands by Tab: a mouse press must not draw a
+                    // focus ring around a header that never had one.
+                    tabIndex={sortable ? 0 : undefined}
+                    aria-sort={
+                      sortable ? (sort?.col === ci ? (sort.dir === 1 ? 'ascending' : 'descending') : 'none') : undefined
+                    }
+                    onMouseDown={sortable ? (e) => e.preventDefault() : undefined}
+                    onKeyDown={
+                      sortable
+                        ? (e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              toggleSort(ci);
+                            }
+                          }
+                        : undefined
+                    }
                   >
                     {c.header}
                     {arrow}
@@ -1516,6 +1543,7 @@ function OwnedAssetsWidget({
 }
 
 function StatusView({ data, ctx }: { data: unknown; ctx: RenderCtx }): JSX.Element {
+  const description = isExplorerNetwork(ctx.network) ? explorerNodes[ctx.network]!.description : '';
   return (
     <>
       <H2>Blockchain status</H2>
@@ -1536,8 +1564,7 @@ function StatusView({ data, ctx }: { data: unknown; ctx: RenderCtx }): JSX.Eleme
       <Card>
         <p>
           Interactive display of the data returned by a Beam explorer node. The network and node currently queried are:{' '}
-          <b>{ctx.network}</b> <Pill>{explorerNodes[ctx.network]?.description}</Pill> at
-          <Mono>{getNodeUrl(ctx.network)}</Mono>.
+          <b>{ctx.network}</b> <Pill>{description}</Pill> at <Mono>{getNodeUrl(ctx.network)}</Mono>.
         </p>
         <p>
           Beam is a privacy-centric blockchain with native confidential assets and smart contracts, powered by
@@ -1943,10 +1970,7 @@ function AssetView({ data, view, ctx }: { data: any; view: ViewState; ctx: Rende
   const dist = data?.['Asset distribution'];
   return (
     <>
-      <H2>
-        Status of Asset
-        {view.id}
-      </H2>
+      <H2>Status of Asset {view.id}</H2>
       <Collapsible open>
         <summary>Asset History</summary>
         <FilterTable
@@ -2001,26 +2025,31 @@ function AssetView({ data, view, ctx }: { data: any; view: ViewState; ctx: Rende
 }
 
 function AssetsView({ data, view, ctx }: { data: any; view: ViewState; ctx: RenderCtx }): JSX.Element {
-  const h = Number(view.height || 0);
+  // Prev/Next step from a concrete block height. The current-assets view has
+  // none (it is "as of the tip"), so it has nothing to step from — Next used to
+  // jump to block 1 there.
+  const parsed = Number(view.height);
+  const h = view.height && Number.isFinite(parsed) ? parsed : null;
   return (
     <>
       <H2>
         {view.height ? (
           <>
-            Confidential Assets at block
-            <BlockLink h={view.height} ctx={ctx} />
+            Confidential Assets at block <BlockLink h={view.height} ctx={ctx} />
           </>
         ) : (
           'Current Confidential Assets'
         )}{' '}
-        {h > 1 && (
+        {h !== null && h > 1 && (
           <Btn data-variant="ghost" onClick={() => ctx.go({ type: 'assets', height: String(h - 1) })}>
             ← Prev block
           </Btn>
         )}{' '}
-        <Btn data-variant="ghost" onClick={() => ctx.go({ type: 'assets', height: String((h || 0) + 1) })}>
-          Next block →
-        </Btn>
+        {h !== null && (
+          <Btn data-variant="ghost" onClick={() => ctx.go({ type: 'assets', height: String(h + 1) })}>
+            Next block →
+          </Btn>
+        )}
       </H2>
       <AssetsTable data={data} ctx={ctx} ownerFilter={view.q} />
     </>
@@ -2070,8 +2099,7 @@ function ContractStateView({ data, view, ctx }: { data: any; view: ViewState; ct
   return (
     <>
       <H2>
-        Contract
-        <Mono style={{ color: theme.color.accent }}>{view.id}</Mono>
+        Contract <Mono style={{ color: theme.color.accent }}>{view.id}</Mono>
       </H2>
       <Collapsible open>
         <summary>Call history</summary>
@@ -3549,6 +3577,25 @@ const HdrsPager = styled.div`
   }
 `;
 
+// The table body, memoized on its own: ticking a series checkbox changes
+// `plotted`, which the header needs, but not one of these (up to 2048 × N)
+// cells.
+const HdrsBody = React.memo(function HdrsBody({ rows, ctx }: { rows: unknown[][]; ctx: RenderCtx }): JSX.Element {
+  return (
+    <tbody>
+      {rows.map((row, ri) => (
+        <tr key={ri}>
+          {(Array.isArray(row) ? row : []).map((cell, ci) => (
+            <td key={ci} className="right">
+              <RenderValue value={cell} ctx={ctx} />
+            </td>
+          ))}
+        </tr>
+      ))}
+    </tbody>
+  );
+});
+
 const HdrsTable = React.memo(function HdrsTable({
   data,
   colCodes,
@@ -3568,18 +3615,23 @@ const HdrsTable = React.memo(function HdrsTable({
   useEffect(() => {
     setPage(0);
   }, [data]);
-  const isTable = data && typeof data === 'object' && data.type === 'table' && Array.isArray(data.value);
-  const allRows: unknown[][] = isTable ? ((data.value as unknown[]).filter(Array.isArray) as unknown[][]) : [];
+  const allRows = useMemo<unknown[][]>(() => {
+    const isTable = data && typeof data === 'object' && data.type === 'table' && Array.isArray(data.value);
+    return isTable ? ((data.value as unknown[]).filter(Array.isArray) as unknown[][]) : [];
+  }, [data]);
+  const dataRows = useMemo(() => allRows.slice(1), [allRows]);
+  const pageCount = Math.max(1, Math.ceil(dataRows.length / HDRS_RENDER_CAP));
+  const safePage = Math.min(page, pageCount - 1);
+  // Stable between renders so the memoized body skips a checkbox tick.
+  const visible = useMemo(
+    () => (pageCount > 1 ? dataRows.slice(safePage * HDRS_RENDER_CAP, (safePage + 1) * HDRS_RENDER_CAP) : dataRows),
+    [dataRows, pageCount, safePage],
+  );
   if (allRows.length === 0) {
     // Fall back to the generic renderer for unexpected shapes.
     return <RenderValue value={data} ctx={ctx} />;
   }
   const headerRow = allRows[0]!;
-  const dataRows = allRows.slice(1);
-  const pageCount = Math.max(1, Math.ceil(dataRows.length / HDRS_RENDER_CAP));
-  const safePage = Math.min(page, pageCount - 1);
-  const visible =
-    pageCount > 1 ? dataRows.slice(safePage * HDRS_RENDER_CAP, (safePage + 1) * HDRS_RENDER_CAP) : dataRows;
   // Column 0 is always Height; the rest follow `colCodes` in order.
   const codeForCol = (col: number): string | null => (col === 0 ? 'h' : colCodes[col - 1] ?? null);
 
@@ -3613,17 +3665,7 @@ const HdrsTable = React.memo(function HdrsTable({
             })}
           </tr>
         </thead>
-        <tbody>
-          {visible.map((row, ri) => (
-            <tr key={ri}>
-              {(Array.isArray(row) ? row : []).map((cell, ci) => (
-                <td key={ci} className="right">
-                  <RenderValue value={cell} ctx={ctx} />
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
+        <HdrsBody rows={visible} ctx={ctx} />
       </DataTable>
       {pageCount > 1 && (
         <HdrsPager>
@@ -4143,7 +4185,14 @@ function HdrsView({ data, view, ctx }: { data: any; view: ViewState; ctx: Render
           <Input
             value={colsDraft}
             onChange={(e) => setColsDraft(e.target.value)}
-            onBlur={() => apply()}
+            onBlur={() => {
+              // Leaving the box commits a changed column list only, in place:
+              // an unchanged one used to push a history entry and scroll to the
+              // top on every tab-through. Enter still applies the whole form.
+              if ((colsDraft || COLUMN_DEFAULT_DISPLAY) !== activeCols) {
+                ctx.go({ type: 'hdrs', cols: colsDraft || undefined }, { inPlace: true });
+              }
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') apply();
             }}
@@ -4416,29 +4465,41 @@ function KernelSearch({ onSearch }: { onSearch: (q: BlockQuery) => void }): JSX.
 
 export const BeamExplorer: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [data, setData] = useState<unknown>(null);
-  const [loading, setLoading] = useState(false);
+  // A fetched payload or failure is stored with the request key it answers, so
+  // a render for a different request can tell it is not the current view's —
+  // the first render after a navigation must not pair the new view with the
+  // previous view's data (a Block view fed a status payload says "Block not
+  // found." for a frame), and nothing is left to reset when a request is
+  // superseded or aborted, so no spinner can stick.
+  const [result, setResult] = useState<{ key: string; data: unknown } | null>(null);
+  const [failure, setFailure] = useState<{ key: string; message: string } | null>(null);
   // For a chained hdrs fetch: which request we're on out of how many planned.
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const reqId = useRef(0);
 
   // The URL is the single source of truth for the view; navigating just
   // rewrites the query string and the render follows.
   const view = useMemo(() => parseView(searchParams), [searchParams]);
 
-  const setView = useCallback(
-    (next: ViewState, opts?: GoOptions): void => {
-      setSearchParams(serializeView(next), { replace: opts?.inPlace === true });
-      if (opts?.inPlace !== true && typeof window !== 'undefined') {
-        window.scrollTo({ top: 0, behavior: 'auto' });
-      }
-    },
-    [setSearchParams],
-  );
+  // `go` reads the view and the router's setter through refs so its identity
+  // never changes. Every navigation replaces both (the setter is rebuilt from
+  // the current query string), and a `go` that followed them would re-render
+  // everything memoized on `ctx` — a multi-thousand-row headers table — on each
+  // chart checkbox tick.
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const setSearchParamsRef = useRef(setSearchParams);
+  setSearchParamsRef.current = setSearchParams;
+
+  const setView = useCallback((next: ViewState, opts?: GoOptions): void => {
+    setSearchParamsRef.current(serializeView(next), { replace: opts?.inPlace === true });
+    if (opts?.inPlace !== true && typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'auto' });
+    }
+  }, []);
 
   const go = useCallback(
     (patch: Partial<ViewState>, opts?: GoOptions): void => {
+      const { current: view } = viewRef; // eslint-disable-line @typescript-eslint/no-shadow
       const next: ViewState = { ...view, ...patch };
       const typeChanged = !!patch.type && patch.type !== view.type;
       if (typeChanged) {
@@ -4468,7 +4529,7 @@ export const BeamExplorer: React.FC = () => {
       }
       setView(next, opts);
     },
-    [view, setView],
+    [setView],
   );
 
   // The fetch is keyed on the request the view resolves to, not on the view
@@ -4478,20 +4539,20 @@ export const BeamExplorer: React.FC = () => {
   // so the redirect below still fires when moving between two such views.
   const requestUrl = useMemo(() => buildRequestUrl(view), [view]);
   const fetchKey = requestUrl ?? `none:${view.type}`;
-  const viewRef = useRef(view);
-  viewRef.current = view;
-  const goRef = useRef(go);
-  goRef.current = go;
+
+  // What this render shows, derived rather than stored: the payload and error
+  // only count when they answer the current request, and the page is loading
+  // while a request is owed and neither has arrived. `historical` is static.
+  const settled = result !== null && result.key === fetchKey;
+  const data = settled ? result.data : null;
+  const error = failure !== null && failure.key === fetchKey ? failure.message : null;
+  const loading = view.type !== 'historical' && requestUrl !== null && !settled && error === null;
 
   useEffect(() => {
     const { current: view } = viewRef; // eslint-disable-line @typescript-eslint/no-shadow
-    const { current: go } = goRef; // eslint-disable-line @typescript-eslint/no-shadow
-    if (view.type === 'historical') {
-      setData(null);
-      setError(null);
-      setLoading(false);
-      return undefined;
-    }
+    setFailure(null);
+    setProgress(null);
+    if (view.type === 'historical') return undefined;
     const url = buildRequestUrl(view);
     if (!url) {
       if (view.type === 'asset' && view.id === '0') {
@@ -4499,11 +4560,6 @@ export const BeamExplorer: React.FC = () => {
       }
       return undefined;
     }
-    setLoading(true);
-    setError(null);
-    setProgress(null);
-    reqId.current += 1;
-    const myId = reqId.current;
     const controller = new AbortController();
 
     // hdrs above the 2048-row cap is satisfied by chaining requests; everything
@@ -4512,7 +4568,7 @@ export const BeamExplorer: React.FC = () => {
     const paginate = view.type === 'hdrs' && Number(view.nMax) > HDRS_MAX_PER_REQUEST;
     const onProgress = (done: number, total: number): void => {
       // Ignore late callbacks from a superseded request.
-      if (myId === reqId.current) setProgress({ done, total });
+      if (!controller.signal.aborted) setProgress({ done, total });
     };
     const run = paginate
       ? fetchHdrsPaginated(view, controller.signal, onProgress)
@@ -4523,20 +4579,18 @@ export const BeamExplorer: React.FC = () => {
 
     run
       .then((j) => {
-        if (myId !== reqId.current) return;
-        setData(j);
-        setLoading(false);
+        if (controller.signal.aborted) return;
+        setResult({ key: fetchKey, data: j });
         setProgress(null);
       })
       .catch((e: unknown) => {
-        if (controller.signal.aborted || myId !== reqId.current) return;
-        setError(e instanceof Error ? e.message : 'Request failed');
-        setLoading(false);
+        if (controller.signal.aborted) return;
+        setFailure({ key: fetchKey, message: e instanceof Error ? e.message : 'Request failed' });
         setProgress(null);
       });
 
     return () => controller.abort();
-  }, [fetchKey]);
+  }, [fetchKey, go]);
 
   const ctx: RenderCtx = useMemo(
     () => ({ go, network: view.network, viewType: view.type }),
@@ -4621,12 +4675,7 @@ export const BeamExplorer: React.FC = () => {
             }
           />
         )}
-        {error && (
-          <ErrorBox>
-            Failed to load:
-            {error}
-          </ErrorBox>
-        )}
+        {error && <ErrorBox>Failed to load: {error}</ErrorBox>}
 
         {!loading && !error && (
           <>

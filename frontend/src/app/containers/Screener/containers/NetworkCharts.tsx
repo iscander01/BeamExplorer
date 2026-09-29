@@ -1,6 +1,6 @@
 import { Loading } from '@app/shared/components/Loading';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { styled } from '@linaria/react';
 import { assetLabel } from '@app/shared/components/AssetLabel';
 import {
@@ -640,6 +640,13 @@ const ModalContent = styled.div`
   flex-direction: column;
   padding: 16px;
   position: relative;
+
+  /* Focus lands on the dialog itself when it opens (see useModalA11y); it is a
+     focus sink, not a control, so it draws no ring. A separate block from the
+     global :focus-visible rule, which Chrome 83 doesn't parse. */
+  &:focus {
+    outline: none;
+  }
 `;
 
 const ModalToolbar = styled.div`
@@ -759,6 +766,9 @@ function toSvg(
   title: string,
   formatter: (v: number) => string,
   scale: number,
+  // Honours the log toggle like the multi-line export: a log10 mapping is only
+  // defined for positive values, so a series touching 0 stays linear.
+  logScale: boolean,
   emptyLabel?: string,
 ): string {
   const W = 720;
@@ -778,22 +788,25 @@ function toSvg(
   }
   const xs = series.map((p) => p.ts);
   const ys = series.map((p) => p.value * scale);
+  const useLog = logScale && ys.every((v) => v > 0);
+  const ty = (v: number): number => (useLog ? Math.log10(v) : v);
   const xMin = xs[0]!;
   const xMax = xs[xs.length - 1]!;
-  const yMin = Math.min(...ys);
-  const yMax = Math.max(...ys);
+  const yMin = Math.min(...ys.map(ty));
+  const yMax = Math.max(...ys.map(ty));
   const xRange = Math.max(1, xMax - xMin);
   const yRange = Math.max(Number.EPSILON, yMax - yMin);
   const px = (t: number): number => pad.l + ((t - xMin) / xRange) * innerW;
-  const py = (v: number): number => pad.t + innerH - ((v - yMin) / yRange) * innerH;
+  const py = (v: number): number => pad.t + innerH - ((ty(v) - yMin) / yRange) * innerH;
   const grid = 'rgba(255,255,255,0.06)';
   const label = 'rgba(255,255,255,0.6)';
 
-  const yGrid = axisTicks(yMin, yMax, 5).map((v) => {
+  const yGrid = axisTicks(yMin, yMax, 5).map((tv) => {
+    const v = useLog ? 10 ** tv : tv;
     const y = py(v).toFixed(1);
     return (
       `<line x1="${pad.l}" y1="${y}" x2="${pad.l + innerW}" y2="${y}" stroke="${grid}"/>` +
-      `<text x="${pad.l - 6}" y="${py(v) + 3}" text-anchor="end" fill="${label}">${escapeXml(formatter(v))}</text>`
+      `<text x="${pad.l - 6}" y="${Number(y) + 3}" text-anchor="end" fill="${label}">${escapeXml(formatter(v))}</text>`
     );
   });
   const xGrid = axisTicks(xMin, xMax, 5).map((t, i, arr) => {
@@ -811,7 +824,9 @@ function toSvg(
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" font-family="sans-serif" font-size="11">`,
     `<rect width="${W}" height="${H}" fill="#042548"/>`,
-    `<text x="${pad.l}" y="20" fill="rgba(255,255,255,0.7)" font-size="13">${escapeXml(title)}</text>`,
+    `<text x="${pad.l}" y="20" fill="rgba(255,255,255,0.7)" font-size="13">${escapeXml(title)}${
+      useLog ? ' (log)' : ''
+    }</text>`,
     ...yGrid,
     ...xGrid,
     `<rect x="${pad.l}" y="${pad.t}" width="${innerW}" height="${innerH}" fill="none" stroke="rgba(255,255,255,0.1)"/>`,
@@ -1240,7 +1255,10 @@ const KeyedLinesCell: React.FC<{
 // deep link records the axis only when it differs from this, so the common link
 // carries no `log` at all.
 const LOG_DEFAULTS: Record<string, boolean> = { blackhole: true };
-const logDefaultFor = (key: string): boolean => LOG_DEFAULTS[key] ?? false;
+// Own-property lookup: the key can come from the address bar, and a plain
+// index would read `toString` & co. off the prototype.
+const hasOwn = (o: object, key: string): boolean => Object.prototype.hasOwnProperty.call(o, key);
+const logDefaultFor = (key: string): boolean => (hasOwn(LOG_DEFAULTS, key) ? LOG_DEFAULTS[key]! : false);
 
 type BridgeSplit = 'none' | 'direction' | 'bridge';
 const SPLIT_MODES: ReadonlyArray<{ value: BridgeSplit; label: string; title: string }> = [
@@ -1277,6 +1295,63 @@ interface ChartSpec {
    *  written against; single-series charts default to `zero` (no synthetic
    *  window-edge points), so the cumulative ones set `hold` explicitly. */
   fill?: SeriesFill;
+}
+
+const FOCUSABLE = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(', ');
+
+// Modal behaviour for the expanded chart while `active`: focus moves into the
+// dialog and returns to whatever opened it, Tab cycles inside it, and the page
+// behind stops scrolling. The lock goes on <html>, not <body>: html carries the
+// overflow-x rule, so that is the element whose overflow reaches the viewport
+// (see the note on `body` in styles.ts). The previous inline value is put back
+// on close and on unmount alike, since both run this cleanup.
+function useModalA11y(ref: React.RefObject<HTMLElement>, active: boolean): void {
+  useEffect(() => {
+    if (!active) return undefined;
+    const box = ref.current;
+    const opener = document.activeElement as HTMLElement | null;
+    const root = document.documentElement;
+    const prevOverflow = root.style.overflow;
+    root.style.overflow = 'hidden';
+    if (box) box.focus();
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Tab' || !box) return;
+      // Visible stops only: a disabled or display:none control can't take focus.
+      const stops = Array.prototype.filter.call(
+        box.querySelectorAll(FOCUSABLE),
+        (el: HTMLElement) => el.getClientRects().length > 0,
+      ) as HTMLElement[];
+      if (stops.length === 0) {
+        e.preventDefault();
+        box.focus();
+        return;
+      }
+      const first = stops[0]!;
+      const last = stops[stops.length - 1]!;
+      const cur = document.activeElement;
+      if (!box.contains(cur) || (e.shiftKey && (cur === first || cur === box))) {
+        // Focus escaped (or is about to leave off the first stop): pull it back.
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+      } else if (!e.shiftKey && cur === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      root.style.overflow = prevOverflow;
+      if (opener && document.contains(opener) && typeof opener.focus === 'function') opener.focus();
+    };
+  }, [ref, active]);
 }
 
 export const NetworkCharts: React.FC = () => {
@@ -1562,16 +1637,29 @@ export const NetworkCharts: React.FC = () => {
     [timeframe],
   );
 
+  // Whether the history entry now showing the chart was pushed by expanding it
+  // from the grid (the publish effect below sets it). Then the entry before it is
+  // the bare grid, and closing steps back onto it instead of stacking a second
+  // bare-grid entry on top. A chart opened from a pasted link, or reached by
+  // Back/Forward, has no entry of ours beneath it — stepping back there could
+  // leave the page — so that close rewrites the entry in place.
+  const pushedRef = useRef(false);
+  const navigate = useNavigate();
+
   // Closing drops the whole chart-link param set, so the address bar matches
   // the state and re-opening the same chart is a fresh navigation.
   const closeExpanded = useCallback(() => {
     setExpandedKey(null);
     setViewSpan(null);
     setEffectiveInterval(null);
-    if (CHART_LINK_PARAMS.some((p) => searchParams.has(p))) {
+    if (!CHART_LINK_PARAMS.some((p) => searchParams.has(p))) return;
+    if (pushedRef.current) {
+      pushedRef.current = false;
+      navigate(-1);
+    } else {
       setSearchParams(withoutChartLink(searchParams), { replace: true });
     }
-  }, [searchParams, setSearchParams]);
+  }, [searchParams, setSearchParams, navigate]);
 
   // A coarser timeframe can invalidate the chosen bucket (1m over a year is
   // past the point cap), so the interval goes back to 'auto' with it.
@@ -1973,11 +2061,16 @@ export const NetworkCharts: React.FC = () => {
         key: expandedKey,
         timeframe: modalTimeframe,
         interval: chartInterval,
-        log: logPerKey[expandedKey] ?? logDefaultFor(expandedKey),
-        split: splitPerKey[expandedKey] ?? 'none',
+        log: hasOwn(logPerKey, expandedKey) ? logPerKey[expandedKey]! : logDefaultFor(expandedKey),
+        split: hasOwn(splitPerKey, expandedKey) ? splitPerKey[expandedKey]! : 'none',
       }
     : null;
-  const urlLink = parseChartLink(searchParams, logDefaultFor(searchParams.get('chart') ?? ''));
+  // Only a key the page really has a chart for counts as linked (see
+  // parseChartLink); anything else reads as "no chart" and is scrubbed below.
+  const urlLink = parseChartLink(searchParams, logDefaultFor(searchParams.get('chart') ?? ''), (key) =>
+    allCharts.some((c) => c.key === key),
+  );
+  const staleLink = urlLink === null && searchParams.has('chart');
   const urlSig = chartLinkSignature(urlLink);
   const stateSig = chartLinkSignature(currentLink);
   const syncedSig = useRef('');
@@ -1991,6 +2084,7 @@ export const NetworkCharts: React.FC = () => {
       // The URL moved: a link was opened, or Back/Forward crossed an entry.
       // A URL with no chart closes the expanded one — that is Back working.
       syncedSig.current = urlSig;
+      pushedRef.current = false;
       if (urlLink === null) {
         setExpandedKey(null);
         setViewSpan(null);
@@ -2014,13 +2108,21 @@ export const NetworkCharts: React.FC = () => {
     syncedSig.current = stateSig;
     if (currentLink === null) return; // closeExpanded already cleaned the URL
     const logDefault = logDefaultFor(currentLink.key);
-    setSearchParams(withChartLink(searchParams, currentLink, logDefault), {
-      replace: urlLink !== null && urlLink.key === currentLink.key,
-    });
+    const retune = urlLink !== null && urlLink.key === currentLink.key;
+    if (!retune) pushedRef.current = true;
+    setSearchParams(withChartLink(searchParams, currentLink, logDefault), { replace: retune });
     // Signatures are the dependency that matters; the rest are read as of the
     // render that produced them.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlSig, stateSig]);
+
+  // A `chart` param naming no chart on this page (stale link, typo) opens
+  // nothing, and would otherwise sit in the address bar for good: drop the set.
+  useEffect(() => {
+    if (staleLink) setSearchParams(withoutChartLink(searchParams), { replace: true });
+    // Only the flag matters; the params are read as of the render that raised it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staleLink]);
 
   // Points the expanded single-series chart has on screen, for the exports.
   const expandedShownRef = useRef<ReadonlyArray<ApiChartPoint> | null>(null);
@@ -2086,12 +2188,21 @@ export const NetworkCharts: React.FC = () => {
       downloadBlob(toCsv(filtered, expanded.title), `${base}.csv`, 'text/csv;charset=utf-8');
       return;
     }
-    const svg = toSvg(filtered, expanded.title, expanded.formatter, expanded.scale ?? 1, expanded.emptyLabel);
+    const svg = toSvg(
+      filtered,
+      expanded.title,
+      expanded.formatter,
+      expanded.scale ?? 1,
+      !!logPerKey[expanded.key],
+      expanded.emptyLabel,
+    );
     if (format === 'svg') downloadBlob(svg, `${base}.svg`, 'image/svg+xml');
     else downloadSvgAsPng(svg, `${base}.png`);
   };
 
   useEscapeClose(closeExpanded, expanded !== null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(dialogRef, expanded !== null);
 
   return (
     <Page>
@@ -2175,7 +2286,14 @@ export const NetworkCharts: React.FC = () => {
       </Grid>
       {expanded && (
         <Overlay z={100} backdrop="rgba(0, 0, 0, 0.65)" pad="24px" onClick={closeExpanded}>
-          <ModalContent onClick={(e) => e.stopPropagation()}>
+          <ModalContent
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${expanded.title} chart`}
+            tabIndex={-1}
+            onClick={(e) => e.stopPropagation()}
+          >
             <CloseButton onClick={closeExpanded} aria-label="Close">
               ×
             </CloseButton>

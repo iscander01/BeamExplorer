@@ -37,6 +37,7 @@ import {
 } from './shared/components';
 import { theme } from './shared/theme';
 import { fmtRelative } from './shared';
+import { sortableHeader } from './sortableHeader';
 
 // ---------------------------------------------------------------------------
 // Bridge Tracker
@@ -305,6 +306,11 @@ const SortTh = styled.th`
 
   &:hover {
     color: ${theme.color.text};
+  }
+  /* The global reset removes outlines; this header is keyboard-focusable. */
+  &:focus-visible {
+    outline: 2px solid ${theme.color.accent};
+    outline-offset: -2px;
   }
 `;
 
@@ -939,6 +945,10 @@ const BridgeTracker: React.FC = () => {
     ? chainName(health?.bridges.find((b) => b.bridge === fBridge)?.chain_id)
     : 'Ethereum / Arbitrum';
 
+  // Keyboard-operable header props (focus, Enter / Space, aria-sort) for a column.
+  const sortHeader = (key: string): ReturnType<typeof sortableHeader> =>
+    sortableHeader(sort === key ? dir : null, () => toggleSort(key));
+
   const mark = (key: string): React.ReactNode =>
     sort === key ? <SortMark>{dir === 'desc' ? '▾' : '▴'}</SortMark> : null;
 
@@ -1078,18 +1088,18 @@ const BridgeTracker: React.FC = () => {
           <DataTable>
             <thead>
               <tr>
-                <SortTh onClick={() => toggleSort('bridge')}>Bridge{mark('bridge')}</SortTh>
-                <SortTh onClick={() => toggleSort('direction')}>Direction{mark('direction')}</SortTh>
-                <SortTh onClick={() => toggleSort('msg_id')}>#{mark('msg_id')}</SortTh>
-                <SortTh onClick={() => toggleSort('status')}>Status{mark('status')}</SortTh>
-                <SortTh style={{ textAlign: 'right' }} onClick={() => toggleSort('amount')}>
+                <SortTh {...sortHeader('bridge')}>Bridge{mark('bridge')}</SortTh>
+                <SortTh {...sortHeader('direction')}>Direction{mark('direction')}</SortTh>
+                <SortTh {...sortHeader('msg_id')}>#{mark('msg_id')}</SortTh>
+                <SortTh {...sortHeader('status')}>Status{mark('status')}</SortTh>
+                <SortTh style={{ textAlign: 'right' }} {...sortHeader('amount')}>
                   Amount{mark('amount')}
                 </SortTh>
-                <SortTh style={{ textAlign: 'right' }} onClick={() => toggleSort('fee')}>
+                <SortTh style={{ textAlign: 'right' }} {...sortHeader('fee')}>
                   Relayer fee{mark('fee')}
                 </SortTh>
                 <th>Recipient</th>
-                <SortTh onClick={() => toggleSort('age')}>Age{mark('age')}</SortTh>
+                <SortTh {...sortHeader('age')}>Age{mark('age')}</SortTh>
                 <th>Reference</th>
               </tr>
             </thead>

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Loading } from '@app/shared/components/Loading';
 import AtomicSwapGlyph from '@app/shared/icons/icon-atomic-swap.svg';
 import {
@@ -10,6 +10,7 @@ import {
   Subtitle,
   Muted,
   TabBtn,
+  Btn,
   Pill,
   DataTable,
   ScrollX,
@@ -68,23 +69,42 @@ export const AtomicSwaps: React.FC = () => {
   const [totals, setTotals] = useState<ApiAtomicSwapTotalsPoint | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
+  // Bumped per request, on tab change and on unmount: switching Open/All quickly
+  // leaves the earlier request in flight, and only the newest may write state.
+  const genRef = useRef(0);
   const refresh = useCallback(async () => {
+    genRef.current += 1;
+    const gen = genRef.current;
     try {
       const [a, t] = await Promise.all([
         api.atomicSwaps(tab === 'all' ? { include: 'all' } : {}),
         api.atomicSwapTotals(),
       ]);
+      if (gen !== genRef.current) return;
       setOffers(a.offers);
       setTotals(t.latest);
       setErr(null);
     } catch (e) {
+      if (gen !== genRef.current) return;
       setErr(e instanceof Error ? e.message : String(e));
     }
   }, [tab]);
 
   useEffect(() => {
+    // A new tab starts from scratch, so the other tab's list is never shown
+    // under this tab's label while its request is pending (or after it fails).
+    setOffers(null);
+    setErr(null);
     void refresh();
+    return () => {
+      genRef.current += 1;
+    };
   }, [refresh]);
+
+  const retry = (): void => {
+    setErr(null);
+    void refresh();
+  };
 
   return (
     <Page>
@@ -133,7 +153,13 @@ export const AtomicSwaps: React.FC = () => {
         </Toolbar>
         {err ? <ErrorBox>{err}</ErrorBox> : null}
         {offers === null ? (
-          <Loading size="sm" />
+          err ? (
+            <Btn type="button" onClick={retry}>
+              Retry
+            </Btn>
+          ) : (
+            <Loading size="sm" />
+          )
         ) : offers.length === 0 ? (
           <EmptyState>
             <EmptyIcon>

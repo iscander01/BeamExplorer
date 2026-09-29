@@ -60,6 +60,11 @@ const BASE = window.location.hostname === 'beamterminal.0xmx.net' ? '/api' : 'ht
 // going through `api` — they need the same origin rule.
 export const apiUrl = (path: string): string => `${BASE}${path}`;
 
+// A path segment built from an id. Encoded so `..%2F` or `?` in a route param
+// can't climb out of the segment and hit another endpoint; ids like `0_7` and
+// plain numbers pass through unchanged.
+const seg = (v: string | number): string => encodeURIComponent(String(v));
+
 class ApiError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) {
     super(message);
@@ -88,6 +93,9 @@ async function get<T>(path: string): Promise<T> {
         signal: controller.signal,
       });
       if (!res.ok) {
+        // The API caps requests per IP per minute. No retry loop here: pollers
+        // try again on their next tick, so the banner only has to say so.
+        if (res.status === 429) throw new ApiError(429, 'RATE_LIMITED', 'Too many requests, retrying shortly');
         let code = 'HTTP_ERROR';
         let msg = `HTTP ${res.status}`;
         try {
@@ -138,7 +146,7 @@ export const api = {
   daoOverview: (): Promise<ApiDaoOverview> => get<ApiDaoOverview>('/dao/overview'),
   daoTreasury: (): Promise<ApiDaoTreasury> => get<ApiDaoTreasury>('/dao/treasury'),
   daoTreasuryAsset: (aid: number, limit = 100): Promise<ApiDaoAssetHistory> =>
-    get<ApiDaoAssetHistory>(`/dao/treasury/asset/${aid}?limit=${limit}`),
+    get<ApiDaoAssetHistory>(`/dao/treasury/asset/${seg(aid)}?limit=${limit}`),
   daoRevenue: (groupBy: 'source' | 'pool' | 'tier' | 'asset' = 'source'): Promise<ApiDaoRevenue> =>
     get<ApiDaoRevenue>(`/dao/revenue?groupBy=${groupBy}`),
   daoGovernance: (): Promise<ApiDaoGovernance> => get<ApiDaoGovernance>('/dao/governance'),
@@ -158,34 +166,34 @@ export const api = {
   ): Promise<ApiBridgeMessages> => get<ApiBridgeMessages>(`/bridge/messages${qs(opts)}`),
   bridgeLookup: (q: string): Promise<ApiBridgeLookup> => get<ApiBridgeLookup>(`/bridge/lookup${qs({ q })}`),
   daoProposal: (id: number, offset = 0, limit = 25): Promise<ApiDaoProposalDetail> =>
-    get<ApiDaoProposalDetail>(`/dao/governance/proposals/${id}?offset=${offset}&limit=${limit}`),
+    get<ApiDaoProposalDetail>(`/dao/governance/proposals/${seg(id)}?offset=${offset}&limit=${limit}`),
   miningBlocks: (limit = 50, offset = 0): Promise<ApiMiningBlocks> =>
     get<ApiMiningBlocks>(`/mining/blocks?limit=${limit}&offset=${offset}`),
 
   pairs: (params: PairsQuery = {}): Promise<ApiPairsList> =>
     get<ApiPairsList>(`/pairs${qs(params as Record<string, string | number | boolean | undefined>)}`),
 
-  pair: (id: string | number): Promise<ApiPair> => get<ApiPair>(`/pairs/${id}`),
+  pair: (id: string | number): Promise<ApiPair> => get<ApiPair>(`/pairs/${seg(id)}`),
 
   ohlcv: (
     id: string | number,
     opts: { interval?: Interval; limit?: number; to?: number; denom?: Denom } = {},
-  ): Promise<ApiOhlcv> => get<ApiOhlcv>(`/pairs/${id}/ohlcv${qs(opts)}`),
+  ): Promise<ApiOhlcv> => get<ApiOhlcv>(`/pairs/${seg(id)}/ohlcv${qs(opts)}`),
 
   trades: (
     id: string | number,
     opts: { limit?: number; before?: number; offset?: number; count?: boolean; include_unconfirmed?: boolean } = {},
-  ): Promise<ApiTradesList> => get<ApiTradesList>(`/pairs/${id}/trades${qs({ ...opts, kind: 'Trade' })}`),
+  ): Promise<ApiTradesList> => get<ApiTradesList>(`/pairs/${seg(id)}/trades${qs({ ...opts, kind: 'Trade' })}`),
 
   lpEvents: (
     id: string | number,
     opts: { limit?: number; before?: number; offset?: number; count?: boolean } = {},
-  ): Promise<ApiLpList> => get<ApiLpList>(`/pairs/${id}/trades${qs({ ...opts, kind: 'lp' })}`),
+  ): Promise<ApiLpList> => get<ApiLpList>(`/pairs/${seg(id)}/trades${qs({ ...opts, kind: 'lp' })}`),
 
   poolLiquidity: (
     id: string | number,
     opts: { source?: LiquiditySource; interval?: LiquidityInterval; from?: number; to?: number } = {},
-  ): Promise<ApiPoolLiquidity> => get<ApiPoolLiquidity>(`/pairs/${id}/liquidity${qs(opts)}`),
+  ): Promise<ApiPoolLiquidity> => get<ApiPoolLiquidity>(`/pairs/${seg(id)}/liquidity${qs(opts)}`),
 
   // Resolve a Liquidity-Add deposit by kernel id or block height. Returns a
   // single ApiDepositInfo, or { candidates } when a height has several deposits.
@@ -196,15 +204,15 @@ export const api = {
     events: (refs: string): Promise<ApiLpEventsResult> => get<ApiLpEventsResult>(`/lp-position/events${qs({ refs })}`),
   },
 
-  asset: (aid: number): Promise<ApiAsset> => get<ApiAsset>(`/asset/${aid}`),
+  asset: (aid: number): Promise<ApiAsset> => get<ApiAsset>(`/asset/${seg(aid)}`),
 
   assets: (): Promise<ApiAssetsList> => get<ApiAssetsList>('/assets'),
 
   assetHistory: (aid: number, limit = 100): Promise<ApiAssetHistory> =>
-    get<ApiAssetHistory>(`/asset/${aid}/history${qs({ limit })}`),
+    get<ApiAssetHistory>(`/asset/${seg(aid)}/history${qs({ limit })}`),
 
   assetDistribution: (aid: number): Promise<ApiAssetDistribution> =>
-    get<ApiAssetDistribution>(`/asset/${aid}/distribution`),
+    get<ApiAssetDistribution>(`/asset/${seg(aid)}/distribution`),
 
   // Wallet-gossiped DEX-style asset-to-asset offers (from wallet-api).
   assetSwaps: (
@@ -228,7 +236,7 @@ export const api = {
     return get<ApiDappsList>(`/dapps${qs(flags)}`);
   },
 
-  dapp: (id: string): Promise<ApiDappDetail> => get<ApiDappDetail>(`/dapps/${encodeURIComponent(id)}`),
+  dapp: (id: string): Promise<ApiDappDetail> => get<ApiDappDetail>(`/dapps/${seg(id)}`),
 
   dappPublishers: (): Promise<ApiDappPublishersList> => get<ApiDappPublishersList>('/dapps/publishers'),
 

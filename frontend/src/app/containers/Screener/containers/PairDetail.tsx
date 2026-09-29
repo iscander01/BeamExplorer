@@ -658,6 +658,17 @@ export const PairDetail: React.FC = () => {
 
   const isBeamPair = p.aid1 === 0 || p.aid2 === 0;
 
+  // Sidebar stats are per pool. While a picked fee tier is still loading `p` is
+  // the combined pool, so those stats show a dash rather than another pool's numbers.
+  const sv = (text: string): string => (tierReady ? text : '—');
+  // Rate row: aid2 per aid1 is `price_native`; the inverse is aid1 per aid2.
+  const rateValue =
+    p.price_native != null && Number.isFinite(p.price_native) && p.price_native > 0
+      ? flipRate
+        ? 1 / p.price_native
+        : p.price_native
+      : null;
+
   return (
     <Page>
       <AssetMetaBanner aid1={p.aid1} aid2={p.aid2} sym1={sym1} sym2={sym2} />
@@ -807,8 +818,8 @@ export const PairDetail: React.FC = () => {
                     <th>Date</th>
                     <th>Type</th>
                     <th>Price USD</th>
-                    <th>{p.symbol1}</th>
-                    <th>{p.symbol2}</th>
+                    <th>{sym1}</th>
+                    <th>{sym2}</th>
                     <th>Value</th>
                   </tr>
                 </thead>
@@ -852,15 +863,15 @@ export const PairDetail: React.FC = () => {
           <SidebarSection>
             <PriceRow>
               <span className="lbl">Price USD</span>
-              <span className="lbl">Price {p.symbol1}</span>
+              <span className="lbl">Price {sym1}</span>
             </PriceRow>
             <PriceRow>
-              <span className="val">{fmt$(p.price_usd)}</span>
+              <span className="val">{sv(fmt$(p.price_usd))}</span>
               <span className="native">
                 {/* `Price (sym1)` means price denominated in sym1 — i.e.,
                   how many sym1 you get per 1 sym2. price_native is the
                   reverse (sym2 per sym1) so invert. */}
-                {fmtPrice(p.price_native && p.price_native > 0 ? 1 / p.price_native : null)} {p.symbol1}
+                {sv(fmtPrice(p.price_native && p.price_native > 0 ? 1 / p.price_native : null))} {sym1}
               </span>
             </PriceRow>
           </SidebarSection>
@@ -868,32 +879,32 @@ export const PairDetail: React.FC = () => {
           <ChangeGrid>
             <div className="cell">
               <div className="lbl">24h</div>
-              <div className={`val ${chg24.cls}`}>{chg24.text}</div>
+              <div className={`val ${tierReady ? chg24.cls : 'neutral'}`}>{sv(chg24.text)}</div>
             </div>
             <div className="cell">
               <div className="lbl">TVL</div>
-              <div className="val">{fmt$(p.tvl_usd)}</div>
+              <div className="val">{sv(fmt$(p.tvl_usd))}</div>
             </div>
             <div className="cell">
               <div className="lbl">Vol 24h</div>
-              <div className="val">{fmt$(p.volume_24h_usd)}</div>
+              <div className="val">{sv(fmt$(p.volume_24h_usd))}</div>
             </div>
             <div className="cell">
               <div className="lbl">Txns 24h</div>
-              <div className="val">{p.trades_24h}</div>
+              <div className="val">{sv(String(p.trades_24h))}</div>
             </div>
           </ChangeGrid>
 
           <SidebarSection>
             <h4>Txns 24h</h4>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{totalTxns}</span>
-              <span style={{ color: '#00f6d2', fontFamily: 'var(--font-mono)' }}>{p.buys_24h}</span>
-              <span style={{ color: '#f25f5b', fontFamily: 'var(--font-mono)' }}>{p.sells_24h}</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{sv(String(totalTxns))}</span>
+              <span style={{ color: '#00f6d2', fontFamily: 'var(--font-mono)' }}>{sv(String(p.buys_24h))}</span>
+              <span style={{ color: '#f25f5b', fontFamily: 'var(--font-mono)' }}>{sv(String(p.sells_24h))}</span>
             </div>
             <TxnsBar>
-              <div className="buy-fill" style={{ width: `${buyPct}%` }} />
-              <div className="sell-fill" style={{ width: `${100 - buyPct}%` }} />
+              <div className="buy-fill" style={{ width: `${tierReady ? buyPct : 0}%` }} />
+              <div className="sell-fill" style={{ width: `${tierReady ? 100 - buyPct : 0}%` }} />
             </TxnsBar>
           </SidebarSection>
 
@@ -905,8 +916,8 @@ export const PairDetail: React.FC = () => {
                 <AssetLabel className="lbl" aid={p.aid1} sym={p.symbol1} />
               </div>
               <span className="val">
-                {fmtNum(p.reserve1_human, 2)}
-                <span className="usd">{fmt$(p.reserve1_usd)}</span>
+                {sv(fmtNum(p.reserve1_human, 2))}
+                <span className="usd">{sv(fmt$(p.reserve1_usd))}</span>
               </span>
             </PoolRow>
             <PoolRow>
@@ -915,8 +926,8 @@ export const PairDetail: React.FC = () => {
                 <AssetLabel className="lbl" aid={p.aid2} sym={p.symbol2} />
               </div>
               <span className="val">
-                {fmtNum(p.reserve2_human, 2)}
-                <span className="usd">{fmt$(p.reserve2_usd)}</span>
+                {sv(fmtNum(p.reserve2_human, 2))}
+                <span className="usd">{sv(fmt$(p.reserve2_usd))}</span>
               </span>
             </PoolRow>
           </SidebarSection>
@@ -925,7 +936,7 @@ export const PairDetail: React.FC = () => {
             <h4>Pair Info</h4>
             <StatRow>
               <span className="lbl">LP Token</span>
-              <span className="val">#{p.lp_token}</span>
+              <span className="val">{tierReady ? `#${p.lp_token}` : '—'}</span>
             </StatRow>
             <StatRow>
               <span className="lbl">Fee tier</span>
@@ -942,8 +953,9 @@ export const PairDetail: React.FC = () => {
                   ⇄
                 </FlipRateBtn>
                 <span>
-                  1 {flipRate ? p.symbol2 : p.symbol1} ={' '}
-                  {fmtPrice(flipRate ? 1 / (p.price_native ?? 1) : p.price_native)} {flipRate ? p.symbol1 : p.symbol2}
+                  {tierReady && rateValue !== null
+                    ? `1 ${flipRate ? sym2 : sym1} = ${fmtPrice(rateValue)} ${flipRate ? sym1 : sym2}`
+                    : '—'}
                 </span>
               </RateLine>
             </StatRow>

@@ -260,9 +260,15 @@ export const Chart: React.FC<Props> = ({
       seriesRef.current = null;
       volSeriesRef.current = null;
       didFitRef.current = false;
+      // The price line lived on the series that just went with the chart; the
+      // preview effect below must build a fresh one on the next series rather
+      // than try to remove this one from it.
+      previewEffRef.current = null;
     };
     // `denomSymbol` / `volumeSymbol` are baked into the legend on construction;
-    // rebuild when they change (a fresh fetch is already in flight, so no UX regression).
+    // rebuild when they change. The data and preview effects below list the same
+    // three values, so a rebuild refills the new chart and redraws the trade
+    // preview line instead of leaving them on the chart that was thrown away.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [style, denomSymbol, volumeSymbol]);
 
@@ -300,12 +306,17 @@ export const Chart: React.FC<Props> = ({
       vs.setData(volData);
     }
     // Only fit on first load for this chart instance — later updates
-    // (polling, pagination prepends) must preserve the user's view.
-    if (!didFitRef.current && candles.length > 0) {
+    // (polling, pagination prepends) must preserve the user's view. Loads only
+    // ever grow the series, so an empty one means the source changed (interval,
+    // denomination or pair — useOhlcv clears the candles while it refetches):
+    // the next load is a new series and must be fitted again.
+    if (candles.length === 0) didFitRef.current = false;
+    else if (!didFitRef.current) {
       chartRef.current?.timeScale().fitContent();
       didFitRef.current = true;
     }
-  }, [candles, style, volumeDecimals]);
+    // denomSymbol / volumeSymbol: refill a chart the create effect rebuilt.
+  }, [candles, style, volumeDecimals, denomSymbol, volumeSymbol]);
 
   // Center the view on a chosen date. Window is ~30 bars either side, derived
   // from the loaded candles' average spacing.
@@ -358,7 +369,9 @@ export const Chart: React.FC<Props> = ({
       axisLabelVisible: true,
       title: tradePreview.label,
     });
-  }, [tradePreview]);
+    // style / symbols: the create effect rebuilds the series on any of them, and
+    // the line has to be redrawn on the new one.
+  }, [tradePreview, style, denomSymbol, volumeSymbol]);
 
   return (
     <ChartWrap ref={wrapRef} minH="520px">

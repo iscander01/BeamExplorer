@@ -12,7 +12,6 @@ import { PALLETE_ASSETS } from '@app/shared/constants';
 import { theme } from '../containers/explorer/shared/theme';
 import { clearChildren, createBeamChart, makeSpan } from './chartTheme';
 import type { ApiKeyedSeries } from '../api/client';
-import { fmtDayLocal } from './format';
 
 // Colour is bound to the series' own key, never to its position in the
 // response: filtering a line out, or the server reordering the groups, must
@@ -127,6 +126,13 @@ export function resampleKeyed(
     out.set(s.key, data);
   }
   return out;
+}
+
+// Tooltip date. Daily and monthly buckets are stamped at UTC midnight, so the
+// day is read in UTC — the local calendar day would show the previous date
+// west of UTC. Matches the time axis and the CSV export.
+function fmtDayUtc(ts: number): string {
+  return new Date(ts * 1000).toISOString().slice(0, 10);
 }
 
 // Row height and header+padding of the crosshair tooltip, used to work out how
@@ -355,23 +361,29 @@ export const KeyedLinesChart: React.FC<Props> = ({
   viewRef.current = { series, colorByKey, hidden, formatter, rowLabel, windowRows };
 
   // Full price extent across the *visible* series (recomputed only when the
-  // data or legend selection changes — never on pan). Padded slightly in log
-  // space so the top/bottom lines aren't flush against the frame.
+  // data, legend selection or axis mode changes — never on pan). On a log axis
+  // only positive values exist and the range is padded multiplicatively so the
+  // top/bottom lines aren't flush against the frame. On a linear axis zeros are
+  // real readings (a flow series' idle days), so the floor is 0 — or the lowest
+  // negative — and only the top gets headroom.
   const priceRange = useMemo(() => {
     let min = Infinity;
     let max = -Infinity;
     for (const s of series) {
       if (hidden.has(s.key)) continue;
       for (const p of s.points) {
-        if (p.value > 0) {
-          if (p.value < min) min = p.value;
-          if (p.value > max) max = p.value;
-        }
+        if (logScale && !(p.value > 0)) continue;
+        if (p.value < min) min = p.value;
+        if (p.value > max) max = p.value;
       }
     }
     if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
-    return { min: min * 0.6, max: max * 1.6 };
-  }, [series, hidden]);
+    if (logScale) return { min: min * 0.6, max: max * 1.6 };
+    const lo = Math.min(0, min);
+    const hi = max > 0 ? max * 1.05 : 0;
+    // A flat all-zero extent has no height; give it one so the line is drawn.
+    return hi > lo ? { min: lo, max: hi } : { min: lo, max: lo + 1 };
+  }, [series, hidden, logScale]);
 
   // Push the pinned range to the providers and re-run the auto-scale so the
   // y-axis settles on the new (stable) extent when the selection changes.
@@ -502,7 +514,7 @@ export const KeyedLinesChart: React.FC<Props> = ({
           tip.appendChild(rest);
         }
       }
-      if (cache.when) cache.when.textContent = fmtDayLocal(param.time as number);
+      if (cache.when) cache.when.textContent = fmtDayUtc(param.time as number);
       for (const r of shown) {
         const node = cache.rows.get(r.key);
         if (!node) continue;

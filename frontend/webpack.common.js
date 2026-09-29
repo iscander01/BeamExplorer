@@ -116,6 +116,12 @@ module.exports = {
           to: path.join(__dirname, 'html/favicon.svg'),
         },
         {
+          // Link-preview card (og:image / twitter:image in index.html): a raster,
+          // since X, Facebook and LinkedIn don't render SVG.
+          from: path.join(__dirname, 'src/og-image.jpg'),
+          to: path.join(__dirname, 'html/og-image.jpg'),
+        },
+        {
           from: path.join(__dirname, 'src/app/shared/icons/logo-dex.svg'),
           to: path.join(__dirname, 'html/logo.svg'),
         },

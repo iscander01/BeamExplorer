@@ -242,10 +242,27 @@ export function pairKey(aid1: number, aid2: number): string {
   return `${aid1}_${aid2}`;
 }
 
-/** Whole units → on-chain groths (the asset's smallest unit) for `decimals`.
- *  Float-based; fine for swap quotes/display. For tx amounts that must be exact
- *  (and can exceed 2^53 groths), use `toGrothsStr`. */
+/** Whole units → groths as a float. Display / quote estimates only: the float
+ *  product can land a groth low (0.29 * 1e8 = 28999999.999...) and loses
+ *  precision past 2^53. Any amount that is sent to the wallet must go through
+ *  `toGrothsStr` instead. */
 export const toGroths = (whole: number, decimals: number): number => Math.floor(whole * 10 ** decimals);
+
+/** Cleans a typed amount: digits and one decimal point only (so no sign, no
+ *  exponent, no "1.2.3"), with at most `decimals` fraction digits — the chain
+ *  has no finer unit. Keeps a trailing "." so "5." can still be typed. */
+export function sanitizeAmount(raw: string, decimals: number): string {
+  const cleaned = raw.replace(/[^0-9.]/g, '');
+  const dot = cleaned.indexOf('.');
+  if (dot === -1) return cleaned;
+  const intPart = cleaned.slice(0, dot);
+  if (decimals <= 0) return intPart;
+  const frac = cleaned
+    .slice(dot + 1)
+    .replace(/\./g, '')
+    .slice(0, decimals);
+  return `${intPart}.${frac}`;
+}
 
 /** On-chain groths → whole units. Accepts the API's decimal-string amounts;
  *  null/undefined/empty read as 0. Plain Number math on purpose: the Babel

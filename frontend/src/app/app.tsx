@@ -16,7 +16,11 @@ import { PairsList } from '@app/containers/Screener/containers/PairsList';
 import { AssetsList } from '@app/containers/Screener/containers/AssetsList';
 import { ExplorerLayout } from '@app/containers/Screener/containers/ExplorerLayout';
 import { DaoLayout } from '@app/containers/Screener/containers/DaoLayout';
-import { LegacyAssetRedirect, LegacyBlockRedirect } from '@app/containers/Screener/containers/LegacyExplorerRedirect';
+import {
+  LegacyAssetRedirect,
+  LegacyBlockRedirect,
+  LegacyContractRedirect,
+} from '@app/containers/Screener/containers/LegacyExplorerRedirect';
 import { Footer } from '@app/containers/Screener/components/Footer';
 import { AssetColorsProvider } from '@app/containers/Screener/assetColors';
 import { ROUTES } from '@app/shared/constants';
@@ -109,6 +113,8 @@ const routes = [
   { path: ROUTES.NAV.DAPPS, element: <Dapps /> },
   { path: ROUTES.NAV.PRIVACY, element: <Privacy /> },
   { path: ROUTES.NAV.LEGACY_BLOCK, element: <LegacyBlockRedirect /> },
+  { path: ROUTES.NAV.LEGACY_BLOCK_HASH, element: <LegacyBlockRedirect /> },
+  { path: ROUTES.NAV.LEGACY_CONTRACT, element: <LegacyContractRedirect /> },
   { path: ROUTES.NAV.LEGACY_ASSET_DETAILS, element: <LegacyAssetRedirect /> },
   {
     path: ROUTES.NAV.EXPLORER,

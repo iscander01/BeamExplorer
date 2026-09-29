@@ -32,6 +32,9 @@ export type TradeSupport = 'wallet' | 'extension' | 'none';
 
 function tradeSupport(): TradeSupport {
   if (isInsideWallet()) return 'wallet';
+  // A phone/tablet browser outside the BEAM app can't run the Web Wallet
+  // extension, and the connector would only fall back to its key-less client.
+  if (BeamDappConnector.isMobile()) return 'none';
   // Mirrors the connector's WEB branch: it only tries the extension on desktop
   // Chrome (not Edge) and goes headless everywhere else.
   if (BeamDappConnector.isWeb() && BeamDappConnector.isChrome()) return 'extension';

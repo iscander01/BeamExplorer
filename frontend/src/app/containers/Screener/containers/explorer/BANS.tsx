@@ -25,6 +25,8 @@ import {
 import { BlockHeight } from '../../../../shared/components/BlockHeight';
 import { assetLabel } from '../../../../shared/components/AssetLabel';
 import { ActionTimeline } from './ActionTimeline';
+import { CATEGORY_TONE, methodCategory } from './bansActions';
+import { sortableHeader } from './sortableHeader';
 import { api } from '../../api/client';
 import type { ApiBansAction } from '../../api/types';
 import { usePolled } from '../../hooks';
@@ -66,8 +68,6 @@ interface SortState {
   key: SortKey;
   dir: 1 | -1;
 }
-
-type MethodTone = 'accent' | 'info' | 'warn' | 'purple' | 'danger' | 'neutral';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -177,26 +177,6 @@ function parseDomains(data: any): Domain[] {
     });
   }
   return out;
-}
-
-function methodClass(method: string): string {
-  const m = (method || '').toLowerCase();
-  if (m.indexOf('register') !== -1) return 'register';
-  if (m.indexOf('extend') !== -1 || m.indexOf('renew') !== -1 || m.indexOf('prolong') !== -1) return 'extend';
-  if (m.indexOf('transfer') !== -1 || m.indexOf('buy') !== -1) return 'buy';
-  if (m.indexOf('sell') !== -1 || m.indexOf('list') !== -1 || m.indexOf('offer') !== -1) return 'sell';
-  if (m.indexOf('update') !== -1 || m.indexOf('set') !== -1 || m.indexOf('change') !== -1) return 'update';
-  if (m.indexOf('delete') !== -1 || m.indexOf('cancel') !== -1 || m.indexOf('remove') !== -1) return 'delete';
-  return 'other';
-}
-
-function methodTone(cls: string): MethodTone {
-  if (cls === 'register') return 'accent';
-  if (cls === 'extend') return 'info';
-  if (cls === 'update') return 'warn';
-  if (cls === 'buy' || cls === 'sell') return 'purple';
-  if (cls === 'delete') return 'danger';
-  return 'neutral';
 }
 
 // ---------------------------------------------------------------------------
@@ -348,6 +328,15 @@ const ChipGroup = styled.div`
   flex-wrap: wrap;
   & > * + * {
     margin-left: 6px;
+  }
+`;
+
+// The global reset removes outlines, so the keyboard-focusable sort headers get
+// their own focus ring (a rule of its own: Chrome 83 drops :focus-visible).
+const DomainsTable = styled(DataTable)`
+  th[data-sortable]:focus-visible {
+    outline: 2px solid ${theme.color.accent};
+    outline-offset: -2px;
   }
 `;
 
@@ -614,6 +603,10 @@ export const BANS: React.FC = () => {
     });
   }
 
+  // Keyboard-operable header props (focus, Enter / Space, aria-sort) for a column.
+  const sortHeader = (key: SortKey): ReturnType<typeof sortableHeader> =>
+    sortableHeader(sort.key === key ? (sort.dir > 0 ? 'asc' : 'desc') : null, () => toggleSort(key));
+
   const sortArrow = (key: SortKey): string | null => (sort.key === key ? (sort.dir > 0 ? '▲' : '▼') : null);
 
   // ---- Activity pagination (full indexed history from the API, newest first) ----
@@ -877,22 +870,16 @@ export const BANS: React.FC = () => {
         </Toolbar>
         {domainsPager}
         <ScrollX>
-          <DataTable>
+          <DomainsTable>
             <thead>
               <tr>
-                <th data-sortable onClick={() => toggleSort('name')}>
-                  Name {sortArrow('name') && <SortArrow>{sortArrow('name')}</SortArrow>}
-                </th>
-                <th data-sortable onClick={() => toggleSort('owner')}>
-                  Owner
-                </th>
-                <th data-sortable onClick={() => toggleSort('expiration')}>
+                <th {...sortHeader('name')}>Name {sortArrow('name') && <SortArrow>{sortArrow('name')}</SortArrow>}</th>
+                <th {...sortHeader('owner')}>Owner</th>
+                <th {...sortHeader('expiration')}>
                   Expires at {sortArrow('expiration') && <SortArrow>{sortArrow('expiration')}</SortArrow>}
                 </th>
-                <th data-sortable onClick={() => toggleSort('status')}>
-                  Status
-                </th>
-                <th data-sortable className="right" onClick={() => toggleSort('price')}>
+                <th {...sortHeader('status')}>Status</th>
+                <th className="right" {...sortHeader('price')}>
                   Sell price
                 </th>
               </tr>
@@ -951,7 +938,7 @@ export const BANS: React.FC = () => {
                 })
               )}
             </tbody>
-          </DataTable>
+          </DomainsTable>
         </ScrollX>
         {domainsPager}
       </Panel>
@@ -975,7 +962,6 @@ export const BANS: React.FC = () => {
             </CenteredNote>
           ) : (
             recent.map((a, idx) => {
-              const cls = methodClass(a.method);
               const argKeys = a.args ? Object.keys(a.args) : [];
               const firstKey = argKeys[0];
               return (
@@ -985,7 +971,7 @@ export const BANS: React.FC = () => {
                     <Eta>{new Date(a.block_ts).toLocaleDateString()}</Eta>
                   </HCell>
                   <div>
-                    <Pill data-tone={methodTone(cls)}>{a.method || '—'}</Pill>
+                    <Pill data-tone={CATEGORY_TONE[methodCategory(a.method)]}>{a.method || '—'}</Pill>
                   </div>
                   <Target>
                     {a.name ? (

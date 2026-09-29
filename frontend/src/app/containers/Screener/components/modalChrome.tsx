@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { styled } from '@linaria/react';
 import { WALLET_DOWNLOADS_URL, WEB_WALLET_URL, type TradeSupport } from '../wallet';
 
@@ -74,6 +74,80 @@ export const CloseBtn = styled.button`
     color: #fff;
   }
 `;
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])';
+
+/**
+ * Accessible modal shell for the wallet-action dialogs: the centred overlay +
+ * card with role="dialog" / aria-modal and a label, Escape to close, focus moved
+ * into the card on open (first field, else the card) and returned to the opener
+ * on close, Tab kept inside, and backdrop close only when the press AND the
+ * release both landed on the backdrop — so finishing a text-selection drag
+ * outside the card doesn't dismiss it.
+ */
+export const Modal: React.FC<{ label: string; onClose: () => void; children: React.ReactNode }> = ({
+  label,
+  onClose,
+  children,
+}) => {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const pressedBackdrop = useRef(false);
+  useEscapeClose(onClose);
+
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    const card = cardRef.current;
+    const first = card?.querySelector<HTMLElement>('input:not([disabled]), select:not([disabled])');
+    (first ?? card)?.focus();
+    return () => {
+      // Only hand focus back if it is still inside the dialog (or lost to <body>);
+      // don't steal it from something the user has since focused.
+      const now = document.activeElement;
+      if (opener && typeof opener.focus === 'function' && (!now || now === document.body || card?.contains(now))) {
+        opener.focus();
+      }
+    };
+  }, []);
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (e.key !== 'Tab') return;
+    const card = cardRef.current;
+    if (!card) return;
+    const items = Array.from(card.querySelectorAll<HTMLElement>(FOCUSABLE));
+    if (items.length === 0) {
+      e.preventDefault();
+      return;
+    }
+    const firstItem = items[0]!;
+    const lastItem = items[items.length - 1]!;
+    const active = document.activeElement;
+    if (e.shiftKey && (active === firstItem || active === card)) {
+      e.preventDefault();
+      lastItem.focus();
+    } else if (!e.shiftKey && active === lastItem) {
+      e.preventDefault();
+      firstItem.focus();
+    }
+  };
+
+  return (
+    <Overlay
+      onMouseDown={(e) => {
+        pressedBackdrop.current = e.target === e.currentTarget;
+      }}
+      onClick={(e) => {
+        const closes = pressedBackdrop.current && e.target === e.currentTarget;
+        pressedBackdrop.current = false;
+        if (closes) onClose();
+      }}
+    >
+      <Card ref={cardRef} role="dialog" aria-modal="true" aria-label={label} tabIndex={-1} onKeyDown={onKeyDown}>
+        {children}
+      </Card>
+    </Overlay>
+  );
+};
 
 export type BtnVariant = 'primary' | 'muted' | 'error' | 'success';
 

@@ -1,3 +1,4 @@
+import type { KeyboardEvent } from 'react';
 import { styled } from '@linaria/react';
 import { MOBILE_MEDIA } from './responsive';
 
@@ -39,6 +40,19 @@ export const TableWrap = styled.div<{ maxWidth?: number }>`
   }
 `;
 
+/** onKeyDown for a clickable row/card/header: Enter or Space runs `action`, but
+ *  only for keys pressed on the element itself, so Enter on a nested button (the
+ *  favorite star) keeps doing that button's job instead of opening the row. */
+export const activateOnKey =
+  (action: () => void) =>
+  (e: KeyboardEvent<HTMLElement>): void => {
+    if (e.target !== e.currentTarget) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      action();
+    }
+  };
+
 /** Mobile row card. `sideColumn` adds the right-hand slot (star + sparkline). */
 export const MobileCard = styled.div<{ sideColumn?: boolean }>`
   display: grid;
@@ -52,6 +66,10 @@ export const MobileCard = styled.div<{ sideColumn?: boolean }>`
   cursor: pointer;
   &:hover {
     background: rgba(255, 255, 255, 0.05);
+  }
+  /* Global styles strip the default outline, so keyboard focus needs its own. */
+  &:focus {
+    border-color: rgba(0, 246, 210, 0.6);
   }
 `;
 

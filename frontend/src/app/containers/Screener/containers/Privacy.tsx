@@ -141,6 +141,27 @@ export const Privacy: React.FC = () => (
 
     <h2>Contact</h2>
     <p>For questions about this site, reach out through the BEAM community channels linked in the site footer.</p>
+
+    <h2>Credits</h2>
+    <p>
+      This site is a fork of{' '}
+      <a href="https://beamterminal.0xmx.net/" target="_blank" rel="noopener noreferrer">
+        BeamTerminal
+      </a>
+      . Its charts use{' '}
+      <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">
+        TradingView Lightweight Charts
+      </a>
+      .
+    </p>
+    <p>
+      TradingView Lightweight Charts&trade;
+      <br />
+      Copyright (&#x441;) 2023 TradingView, Inc.{' '}
+      <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">
+        https://www.tradingview.com/
+      </a>
+    </p>
   </Page>
 );
 

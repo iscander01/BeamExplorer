@@ -13,6 +13,7 @@ import { fmt$, fmtNum, pairUrlId } from '../components/format';
 import { KindBadge } from '../components/KindBadge';
 import { ScreenerTable } from '../components/ScreenerTable';
 import { CenteredNote } from '../components/CenteredNote';
+import { activateOnKey } from '../components/listPage';
 import { SupplyChart } from '../components/SupplyChart';
 
 const Page = styled.div`
@@ -445,17 +446,28 @@ export const AssetDetail: React.FC = () => {
               </thead>
               <tbody>
                 {[...asset.pools]
-                  .sort((a, b) => (b.tvl_usd ?? -Infinity) - (a.tvl_usd ?? -Infinity))
+                  // Highest TVL first; pools without a TVL last. (A bare -Infinity
+                  // difference is NaN for two null rows, which breaks the sort.)
+                  .sort((a, b) => {
+                    if (a.tvl_usd == null) return b.tvl_usd == null ? 0 : 1;
+                    if (b.tvl_usd == null) return -1;
+                    return b.tvl_usd - a.tvl_usd;
+                  })
                   .map((pool) => {
                     const sym1 = assetIndex.get(pool.aid1)?.short_name ?? null;
                     const sym2 = assetIndex.get(pool.aid2)?.short_name ?? null;
                     const amt = pool.amount !== null ? Number(pool.amount) / 10 ** asset.decimals : null;
                     const pct =
                       amt !== null && supplyHuman !== null && supplyHuman > 0 ? (amt / supplyHuman) * 100 : null;
+                    const openPool = (): void => navigate(`/pair/${pairUrlId(pool.aid1, pool.aid2, pool.kind)}`);
                     return (
                       <tr
                         key={pool.pair_id}
-                        onClick={() => navigate(`/pair/${pairUrlId(pool.aid1, pool.aid2, pool.kind)}`)}
+                        role="link"
+                        tabIndex={0}
+                        aria-label={sym1 || sym2 ? `${sym1 ?? '?'}/${sym2 ?? '?'}` : `Pool #${pool.pair_id}`}
+                        onClick={openPool}
+                        onKeyDown={activateOnKey(openPool)}
                       >
                         <td>{sym1 || sym2 ? `${sym1 ?? '?'}/${sym2 ?? '?'}` : `Pool #${pool.pair_id}`}</td>
                         <td>

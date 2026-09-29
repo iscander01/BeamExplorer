@@ -37,6 +37,9 @@ export const ActionTimeline: React.FC<{ actions: ApiBansAction[] }> = ({ actions
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(720);
+  // Backing-store scale. Follows browser zoom / moving the window to another
+  // screen, which change devicePixelRatio without changing the CSS width.
+  const [dpr, setDpr] = useState(() => window.devicePixelRatio || 1);
   const [hidden, setHidden] = useState<Set<BansCategory>>(new Set());
   const [hover, setHover] = useState<{ x: number; y: number; action: ApiBansAction } | null>(null);
 
@@ -49,6 +52,23 @@ export const ActionTimeline: React.FC<{ actions: ApiBansAction[] }> = ({ actions
     });
     ro.observe(el);
     return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    // A resolution query only fires for the one ratio it names, so after each
+    // change re-arm it for the new ratio.
+    let mql: MediaQueryList | null = null;
+    const onChange = (): void => {
+      setDpr(window.devicePixelRatio || 1);
+      arm();
+    };
+    function arm(): void {
+      mql?.removeEventListener('change', onChange);
+      mql = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+      mql.addEventListener('change', onChange);
+    }
+    arm();
+    return () => mql?.removeEventListener('change', onChange);
   }, []);
 
   const height = PAD_T + LANES.length * LANE_H + PAD_B;
@@ -98,7 +118,6 @@ export const ActionTimeline: React.FC<{ actions: ApiBansAction[] }> = ({ actions
     const cv = canvasRef.current;
     const ctx = cv?.getContext('2d');
     if (!cv || !ctx) return;
-    const dpr = window.devicePixelRatio || 1;
     cv.width = Math.round(width * dpr);
     cv.height = Math.round(height * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -113,7 +132,7 @@ export const ActionTimeline: React.FC<{ actions: ApiBansAction[] }> = ({ actions
       ctx.lineTo(t.x, y + LANE_H - 4);
       ctx.stroke();
     }
-  }, [visibleTicks, width, height]);
+  }, [visibleTicks, width, height, dpr]);
 
   // Place the tooltip from its real size, before paint: right of the point
   // unless that would cross the right edge (then left of it), and hanging down
@@ -173,7 +192,13 @@ export const ActionTimeline: React.FC<{ actions: ApiBansAction[] }> = ({ actions
     <Wrap ref={wrapRef}>
       <Legend>
         {LANES.map((l) => (
-          <Chip key={l.key} type="button" data-off={hidden.has(l.key)} onClick={() => toggle(l.key)}>
+          <Chip
+            key={l.key}
+            type="button"
+            data-off={hidden.has(l.key)}
+            aria-pressed={!hidden.has(l.key)}
+            onClick={() => toggle(l.key)}
+          >
             <Swatch style={{ background: l.color }} />
             {l.label}
           </Chip>

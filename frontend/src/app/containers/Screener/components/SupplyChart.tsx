@@ -116,7 +116,8 @@ export const SupplyChart: React.FC<Props> = ({ points, unit }) => {
     }
     s.setData(data);
     if (data.length > 0) chartRef.current?.timeScale().fitContent();
-  }, [points]);
+    // `unit`: the create effect rebuilds the chart when it changes, so refill it.
+  }, [points, unit]);
 
   return (
     <ChartWrap h="220px">

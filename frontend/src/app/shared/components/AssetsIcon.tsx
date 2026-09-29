@@ -22,11 +22,17 @@ export function normalizeOptColor(raw: string | undefined | null): string | null
 
 // OPT_LOGO_URL from on-chain metadata is attacker-controlled, so only accept
 // plain http(s) URLs — never `javascript:`/`data:` schemes. Rendered through an
-// <img> regardless, so even an SVG logo can't execute scripts.
+// <img> regardless, so even an SVG logo can't execute scripts. On an https page
+// only https logos are loaded: an http one is blocked as mixed content at best,
+// and at worst leaks the visit to whoever runs that host (the wallet's own
+// http://127.0.0.1 page is unaffected). The <img> also sends no Referer.
 export function normalizeLogoUrl(raw: string | undefined | null): string | null {
   if (!raw) return null;
   const trimmed = raw.trim();
   if (!/^https?:\/\//i.test(trimmed)) return null;
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:' && !/^https:\/\//i.test(trimmed)) {
+    return null;
+  }
   return trimmed;
 }
 
@@ -222,7 +228,7 @@ const AssetIcon: React.FC<AssetIconProps> = ({ asset_id = 0, className, size = 2
   return (
     <ContainerStyled resolvedColor={resolvedColor} size={size} className={className}>
       {showLogo ? (
-        <img src={logo as string} alt="" onError={() => setErroredUrl(logo)} />
+        <img src={logo as string} alt="" referrerPolicy="no-referrer" onError={() => setErroredUrl(logo)} />
       ) : BrandedIcon ? (
         <BrandedIcon />
       ) : (

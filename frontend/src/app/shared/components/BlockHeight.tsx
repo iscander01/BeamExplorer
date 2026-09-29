@@ -19,8 +19,15 @@ import { EXPLORER_API } from '../constants';
 const DEFAULT_EXPLORER_API = EXPLORER_API;
 const BLOCK_SECONDS = 60;
 
-// Resolved fetch URL -> unix-seconds timestamp (null = looked up, unavailable).
+// Resolved fetch URL -> unix-seconds timestamp (null = the node answered but has
+// no timestamp for it).
 const tsCache = new Map<string, number | null>();
+// Resolved fetch URL -> when the lookup last failed (network error, HTTP error).
+// Failures are not cached like answers: a blip must not blank the tooltip for
+// the whole session, but hovering must not hammer a struggling node either, so
+// the URL is retried once the entry is older than FAILED_RETRY_MS.
+const failedAt = new Map<string, number>();
+const FAILED_RETRY_MS = 30_000;
 
 export type BlockUrlResolver = (height: number) => string | null;
 
@@ -78,6 +85,12 @@ export function useBlockTimestamp(
       setLoading(false);
       return undefined;
     }
+    const failed = failedAt.get(url);
+    if (failed !== undefined && Date.now() - failed < FAILED_RETRY_MS) {
+      setTs(null);
+      setLoading(false);
+      return undefined;
+    }
     let cancelled = false;
     setLoading(true);
     fetch(url)
@@ -85,10 +98,11 @@ export function useBlockTimestamp(
       .then((d: any) => {
         const t = typeof d?.timestamp === 'number' ? d.timestamp : null;
         tsCache.set(url, t);
+        failedAt.delete(url);
         if (!cancelled) setTs(t);
       })
       .catch(() => {
-        tsCache.set(url, null);
+        failedAt.set(url, Date.now());
         if (!cancelled) setTs(null);
       })
       .finally(() => {

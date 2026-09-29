@@ -148,6 +148,13 @@ const ProposalCardView: React.FC<{ p: ApiDaoProposalSummary }> = ({ p }) => (
 export const DaoGovernance: React.FC = () => {
   const { data, error } = usePolled<ApiDaoGovernance>(() => api.daoGovernance(), [], POLL_MS);
 
+  // Memoized: TimeChart re-feeds (and re-fits) its series whenever `data` changes
+  // identity, which would reset the user's pan/zoom on every unrelated re-render.
+  const votingSeries = useMemo(
+    () => (data?.voting_power_series ?? []).map((s) => ({ label: s.day, value: s.staked })),
+    [data],
+  );
+
   const byEpoch = useMemo(() => {
     const m = new Map<number, ApiDaoProposalSummary[]>();
     for (const p of data?.proposals ?? []) {
@@ -167,12 +174,7 @@ export const DaoGovernance: React.FC = () => {
         </div>
       </ExplorerHeader>
 
-      {error && (
-        <ErrorBox>
-          Failed to load governance:
-          {error}
-        </ErrorBox>
-      )}
+      {error && <ErrorBox>{`Failed to load governance: ${error}`}</ErrorBox>}
 
       <StatGrid>
         <StatCard>
@@ -198,10 +200,7 @@ export const DaoGovernance: React.FC = () => {
       <Panel>
         <PanelHead>Voting power staked over time (BEAMX)</PanelHead>
         <div style={{ padding: '14px 16px' }}>
-          <TimeChart
-            data={(data?.voting_power_series ?? []).map((s) => ({ label: s.day, value: s.staked }))}
-            fmtY={fmtCompact}
-          />
+          <TimeChart data={votingSeries} fmtY={fmtCompact} />
         </div>
       </Panel>
 
