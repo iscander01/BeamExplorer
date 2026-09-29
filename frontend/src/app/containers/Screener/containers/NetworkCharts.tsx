@@ -94,19 +94,65 @@ const TIMEFRAME_RES: Record<Timeframe, ChartRes> = {
   ALL: '1d',
 };
 
-function filterByTimeframe(series: ReadonlyArray<ApiChartPoint>, tf: Timeframe): ApiChartPoint[] {
-  if (series.length === 0) return [];
+const nowSec = (): number => Math.floor(Date.now() / 1000);
+
+// Start of a timeframe's window (unix seconds), or null for ALL. Counted back
+// from the wall clock, never from a series' newest point: a sparse series whose
+// last event was months ago would otherwise drag its "1M" back to the month
+// before that event.
+function timeframeCutoff(tf: Timeframe, now: number): number | null {
   const days = TIMEFRAME_DAYS[tf];
-  if (days === null) return series.slice();
-  let cutoff: number;
-  if (tf === 'YTD') {
-    const last = series[series.length - 1].ts;
-    const year = new Date(last * 1000).getUTCFullYear();
-    cutoff = Date.UTC(year, 0, 1) / 1000;
-  } else {
-    cutoff = series[series.length - 1].ts - (days as number) * 86400;
+  if (days === null) return null;
+  if (tf === 'YTD') return Date.UTC(new Date(now * 1000).getUTCFullYear(), 0, 1) / 1000;
+  return now - days * 86_400;
+}
+
+// A held level whose newest point is older than this gets a closing point at
+// `now`. Dense series always have a point in the current day (or hour), so
+// only a sparse one — no event for over a day — is extended.
+const STALE_LEVEL_SEC = 86_400;
+
+// The points of one (ascending) series inside [cutoff, now].
+//
+// A `hold` (balance / cumulative) series carries its pre-window level forward
+// to a synthetic point at the cutoff — so it starts at its real level instead of
+// mid-air — and, when its last event is stale, on to a closing point at `now`,
+// so a series with no in-window movement still shows its flat level across the
+// window rather than "No data". A `zero` (flow) series must not: nothing
+// happened at either end, so those points would be invented readings, and they
+// would land in the CSV/SVG exports too.
+function windowPoints(
+  points: ReadonlyArray<ApiChartPoint>,
+  cutoff: number,
+  now: number,
+  fill: SeriesFill,
+): ApiChartPoint[] {
+  const pts = points.filter((p) => p.ts >= cutoff);
+  if (fill !== 'hold') return pts;
+  let before: ApiChartPoint | undefined;
+  for (const p of points) {
+    if (p.ts >= cutoff) break;
+    before = p;
   }
-  return series.filter((p) => p.ts >= cutoff);
+  if (before && (pts.length === 0 || pts[0].ts > cutoff)) pts.unshift({ ts: cutoff, value: before.value });
+  const last = pts[pts.length - 1];
+  if (last && last.ts < now - STALE_LEVEL_SEC) pts.push({ ts: now, value: last.value });
+  return pts;
+}
+
+// Timeframe filter for a single-series chart. Defaults to `zero`: most single
+// series are flows or dense levels, and only the cumulative ones opt into
+// `hold` (see ChartSpec.fill).
+function filterByTimeframe(
+  series: ReadonlyArray<ApiChartPoint>,
+  tf: Timeframe,
+  fill: SeriesFill = 'zero',
+): ApiChartPoint[] {
+  if (series.length === 0) return [];
+  const now = nowSec();
+  const cutoff = timeframeCutoff(tf, now);
+  if (cutoff === null) return series.slice();
+  return windowPoints(series, cutoff, now, fill);
 }
 
 // ── Range (timeframe) + interval model for the expanded chart ───────────────
@@ -185,51 +231,35 @@ function clipSeries(series: ReadonlyArray<ApiChartPoint>, from: number, to: numb
   return series.filter((p) => p.ts >= from && p.ts <= to);
 }
 
-// Real [from, to] for a timeframe, anchored on the daily series' ACTUAL bounds
-// (never epoch-0 → no 1970 axis).
+// Real [from, to] for a timeframe. The window runs back from now, not from the
+// newest daily point: daily buckets are stamped 00:00 UTC, so ending there would
+// clip every 1m/1h point of the current day. `from` never precedes the daily
+// series' first point (never epoch-0 → no 1970 axis). Both ends snap to the hour
+// so the window — and with it the fetch key and the server's range cache — only
+// moves when the timeframe or the daily series does (the caller memoises it).
 function rangeBoundsFor(series: ReadonlyArray<ApiChartPoint>, tf: Timeframe): { from: number; to: number } | null {
   if (series.length === 0) return null;
+  const now = nowSec();
   const first = series[0].ts;
-  const to = series[series.length - 1].ts;
-  const days = TIMEFRAME_DAYS[tf];
-  if (days === null) return { from: first, to };
-  if (tf === 'YTD') return { from: Date.UTC(new Date(to * 1000).getUTCFullYear(), 0, 1) / 1000, to };
-  return { from: Math.max(first, to - days * 86_400), to };
+  const to = Math.max(series[series.length - 1].ts, Math.ceil(now / 3600) * 3600);
+  const cutoff = timeframeCutoff(tf, now);
+  if (cutoff === null) return { from: first, to };
+  return { from: Math.max(first, Math.floor(cutoff / 3600) * 3600), to };
 }
 
-// Timeframe filter for any multi-series chart. Anchors on the latest ts across
-// every series (they all share the chain-head point).
-//
-// A `hold` (balance) series carries its pre-window level forward to a synthetic
-// point at the cutoff — so cumulative lines start at their real level instead of
-// mid-air, and a series with no in-window movement still shows its flat level.
-// A `zero` (flow) series must not: nothing was transferred at the cutoff, so
-// that point would be an invented reading, and it would land in the CSV/SVG
-// exports too.
+// Timeframe filter for any multi-series chart: every series is windowed against
+// the same now-anchored cutoff (see windowPoints for what `fill` does at the
+// window's ends).
 function filterMultiByTimeframe<T extends { points: ApiChartPoint[] }>(
   series: ReadonlyArray<T>,
   tf: Timeframe,
   fill: SeriesFill = 'hold',
 ): T[] {
-  if (tf === 'ALL' || series.length === 0) return series.map((s) => ({ ...s, points: s.points.slice() }));
-  let lastTs = 0;
-  for (const s of series) {
-    const p = s.points[s.points.length - 1];
-    if (p && p.ts > lastTs) lastTs = p.ts;
-  }
-  if (lastTs === 0) return series.map((s) => ({ ...s, points: s.points.slice() }));
-  let cutoff: number;
-  if (tf === 'YTD') cutoff = Date.UTC(new Date(lastTs * 1000).getUTCFullYear(), 0, 1) / 1000;
-  else cutoff = lastTs - (TIMEFRAME_DAYS[tf] as number) * 86400;
+  const now = nowSec();
+  const cutoff = timeframeCutoff(tf, now);
+  if (cutoff === null || series.length === 0) return series.map((s) => ({ ...s, points: s.points.slice() }));
   return series
-    .map((s) => {
-      const pts = s.points.filter((p) => p.ts >= cutoff);
-      const before = fill === 'hold' ? s.points.filter((p) => p.ts < cutoff) : [];
-      if (before.length > 0 && (pts.length === 0 || pts[0].ts > cutoff)) {
-        pts.unshift({ ts: cutoff, value: before[before.length - 1].value });
-      }
-      return { ...s, points: pts };
-    })
+    .map((s) => ({ ...s, points: windowPoints(s.points, cutoff, now, fill) }))
     .filter((s) => s.points.length > 0);
 }
 
@@ -319,26 +349,45 @@ function useKeyedSeries<T>(fetcher: () => Promise<T>, key: string, enabled: bool
 interface TieredSeries {
   /** Tier matching the grid toolbar's timeframe. */
   grid: FetchState<ApiChartSeries>;
-  /** Tier matching the expanded modal's timeframe. */
+  /** Tier matching the expanded modal's timeframe — daily unless this chart is
+   *  the one expanded and slices its tier in place (see `modalResFor`). */
   modal: FetchState<ApiChartSeries>;
   /** The daily tier itself, for derived all-time series. */
   daily: FetchState<ApiChartSeries>;
 }
 
+/** `hold` marks a cumulative / balance series. Its hourly tier only covers a
+ *  trailing window and only has rows for buckets with activity, so it can come
+ *  back empty while the level plainly exists (no asset minted in the last 35
+ *  days). Such a series falls back to the daily tier, whose pre-window points
+ *  the timeframe filter carries forward. */
 function useTiered(
   dailyFetcher: () => Promise<ApiChartSeries>,
   hourlyFetcher: () => Promise<ApiChartSeries>,
   gridRes: ChartRes,
   modalRes: ChartRes,
   enabled = true,
+  hold = false,
 ): TieredSeries {
   const daily = useOneShot<ApiChartSeries>(dailyFetcher, enabled);
   const hourly = useOneShot<ApiChartSeries>(hourlyFetcher, enabled && (gridRes === '1h' || modalRes === '1h'));
+  const pick = (res: ChartRes): FetchState<ApiChartSeries> => {
+    if (res !== '1h') return daily;
+    if (hold && hourly.data && hourly.data.series.length === 0) return daily;
+    return hourly;
+  };
   return {
-    grid: gridRes === '1h' ? hourly : daily,
-    modal: modalRes === '1h' ? hourly : daily,
+    grid: pick(gridRes),
+    modal: pick(modalRes),
     daily,
   };
+}
+
+// Whether the expanded view of `key` refetches by range (its own full + window
+// fetches) instead of slicing the tiered payload. `assets` renders through
+// ConfidentialAssetsChart, which has no range support, so it stays static.
+function isRangeable(key: string): boolean {
+  return !!RANGE_FETCHERS[key] && (LADDERS[key]?.length ?? 1) > 1 && key !== 'assets';
 }
 
 // Prepend a synthetic 0 one day before the first datum so a cumulative-count
@@ -951,6 +1000,8 @@ interface ChartCellProps {
   hideAmml?: boolean;
   /** Message shown when the series has no points (defaults to "No data"). */
   emptyLabel?: string;
+  /** What a gap means for the timeframe filter (see windowPoints). */
+  fill?: SeriesFill;
   onExpand: () => void;
 }
 
@@ -1084,13 +1135,14 @@ const ChartCell: React.FC<ChartCellProps & { onToggleLog: () => void; headerExtr
   logScale,
   chartKey,
   emptyLabel,
+  fill,
   onExpand,
   onToggleLog,
   headerExtra,
 }) => {
   const filtered = useMemo(
-    () => (state.data ? filterByTimeframe(state.data.series, timeframe) : null),
-    [state.data, timeframe],
+    () => (state.data ? filterByTimeframe(state.data.series, timeframe, fill) : null),
+    [state.data, timeframe, fill],
   );
   return (
     <ChartShell
@@ -1219,9 +1271,11 @@ interface ChartSpec {
   emptyLabel?: string;
   /** Renders the Total / Direction / Bridge mode toggle for this chart. */
   splittable?: boolean;
-  /** Multi-series charts only: whether a bucket with no point means the last
-   *  level still holds (a balance) or means zero (a flow). Defaults to `hold`,
-   *  the contract the multi-series helpers were originally written against. */
+  /** Whether a bucket with no point means the last level still holds (a
+   *  balance / cumulative total) or means zero (a flow). Multi-series charts
+   *  default to `hold`, the contract the multi-series helpers were originally
+   *  written against; single-series charts default to `zero` (no synthetic
+   *  window-edge points), so the cumulative ones set `hold` explicitly. */
   fill?: SeriesFill;
 }
 
@@ -1255,60 +1309,71 @@ export const NetworkCharts: React.FC = () => {
   const onLelantus = category === 'lelantus';
   const onDefi = category === 'defi';
 
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  // Only the expanded chart reads its tier at the modal's timeframe, and only
+  // when it slices that tier in place — a rangeable chart fetches its own window
+  // and never reads it. Every other chart keeps a daily modal tier (already
+  // loaded), so opening one chart on 1W doesn't pull the hourly tier of the
+  // twenty behind it. The grid's own tier still follows the grid timeframe.
+  // Extra keys name the charts that draw this series as their overlay.
+  const modalTierKey = expandedKey !== null && !isRangeable(expandedKey) ? expandedKey : null;
+  const modalResFor = (...keys: string[]): ChartRes =>
+    modalTierKey !== null && keys.includes(modalTierKey) ? modalRes : '1d';
+
   const hashrate = useTiered(
     () => api.charts.hashrate(),
     () => api.charts.hashrate({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('hashrate'),
     onBlockchain,
   );
   const difficulty = useTiered(
     () => api.charts.difficulty(),
     () => api.charts.difficulty({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('difficulty'),
     onBlockchain,
   );
   const blockTime = useTiered(
     () => api.charts.blockTime(),
     () => api.charts.blockTime({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('blockTime'),
     onBlockchain,
   );
   const coinbase = useTiered(
     () => api.charts.coinbase(),
     () => api.charts.coinbase({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('coinbase', 'transactionsDaily'),
     onBlockchain,
   );
   const tvl = useTiered(
     () => api.charts.tvl(),
     () => api.charts.tvl({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('tvl'),
     onDefi,
   );
   const price = useTiered(
     () => api.charts.price(),
     () => api.charts.price({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('price'),
     onDefi,
   );
   const marketCap = useTiered(
     () => api.charts.marketCap(),
     () => api.charts.marketCap({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('marketCap'),
     onDefi,
   );
   const dexVolume = useTiered(
     () => api.charts.dexVolume(),
     () => api.charts.dexVolume({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('dexVolume'),
     onDefi,
   );
   const beamVol = useOneShot<ApiChartSeries>(() => api.charts.beamVol(), onDefi);
@@ -1345,113 +1410,124 @@ export const NetworkCharts: React.FC = () => {
     () => api.charts.assets(),
     () => api.charts.assets({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('assets'),
     onBlockchain,
+    true,
   );
   const transactionsDaily = useTiered(
     () => api.charts.transactionsDaily(),
     () => api.charts.transactionsDaily({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('transactionsDaily'),
     onBlockchain,
   );
   const transactionsTotal = useTiered(
     () => api.charts.transactionsTotal(),
     () => api.charts.transactionsTotal({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('transactionsTotal'),
     onBlockchain,
+    true,
   );
   const txosTotal = useTiered(
     () => api.charts.txosTotal(),
     () => api.charts.txosTotal({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('txosTotal'),
     onBlockchain,
+    true,
   );
   const utxosTotal = useTiered(
     () => api.charts.utxosTotal(),
     () => api.charts.utxosTotal({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('utxosTotal'),
     onBlockchain,
+    true,
   );
   const shieldedInsDaily = useTiered(
     () => api.charts.shieldedInsDaily(),
     () => api.charts.shieldedInsDaily({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('shieldedIns'),
     onLelantus,
   );
   const shieldedInsTotal = useTiered(
     () => api.charts.shieldedInsTotal(),
     () => api.charts.shieldedInsTotal({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('shieldedInsTotal'),
     onLelantus,
+    true,
   );
   const shieldedOutsDaily = useTiered(
     () => api.charts.shieldedOutsDaily(),
     () => api.charts.shieldedOutsDaily({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('shieldedOuts'),
     onLelantus,
   );
   const shieldedOutsTotal = useTiered(
     () => api.charts.shieldedOutsTotal(),
     () => api.charts.shieldedOutsTotal({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('shieldedOutsTotal'),
     onLelantus,
+    true,
   );
   const contractsTotal = useTiered(
     () => api.charts.contractsTotal(),
     () => api.charts.contractsTotal({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('contractsTotal'),
     onBlockchain,
+    true,
   );
   const sizeTotal = useTiered(
     () => api.charts.sizeTotal(),
     () => api.charts.sizeTotal({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('sizeTotal'),
     onBlockchain,
+    true,
   );
   const archiveTotal = useTiered(
     () => api.charts.archiveTotal(),
     () => api.charts.archiveTotal({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('archiveTotal'),
     onBlockchain,
+    true,
   );
   const feesDaily = useTiered(
     () => api.charts.feesDaily(),
     () => api.charts.feesDaily({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('feesDaily'),
     onBlockchain,
   );
   const feesTotal = useTiered(
     () => api.charts.feesTotal(),
     () => api.charts.feesTotal({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('feesTotal'),
     onBlockchain,
+    true,
   );
   const contractCallsDaily = useTiered(
     () => api.charts.contractCallsDaily(),
     () => api.charts.contractCallsDaily({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('callsDaily'),
     onBlockchain,
   );
   const contractCallsTotal = useTiered(
     () => api.charts.contractCallsTotal(),
     () => api.charts.contractCallsTotal({ res: '1h' }),
     gridRes,
-    modalRes,
+    modalResFor('callsTotal'),
     onBlockchain,
+    true,
   );
   const blackhole = useOneShot<ApiBlackholeBody>(() => api.charts.blackhole(), onDefi);
   const bridgeTransfers = useOneShot<ApiChartSeries>(() => api.charts.bridgeTransfers(), onDefi);
@@ -1470,7 +1546,6 @@ export const NetworkCharts: React.FC = () => {
     [bridgeFeesTotalRaw.data, bridgeFeesTotalRaw.loading, bridgeFeesTotalRaw.error],
   );
 
-  const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Open a chart. The interval starts at 'auto' and the reported visible span
@@ -1582,6 +1657,7 @@ export const NetworkCharts: React.FC = () => {
       state: transactionsTotal.grid,
       expandedState: transactionsTotal.modal,
       formatter: fmtInt,
+      fill: 'hold',
       category: 'blockchain',
     },
     {
@@ -1598,6 +1674,7 @@ export const NetworkCharts: React.FC = () => {
       state: feesTotal.grid,
       expandedState: feesTotal.modal,
       formatter: fmtBeam,
+      fill: 'hold',
       category: 'blockchain',
     },
     {
@@ -1614,6 +1691,7 @@ export const NetworkCharts: React.FC = () => {
       state: contractCallsTotal.grid,
       expandedState: contractCallsTotal.modal,
       formatter: fmtInt,
+      fill: 'hold',
       category: 'blockchain',
     },
     // Blockchain — standalone
@@ -1647,6 +1725,7 @@ export const NetworkCharts: React.FC = () => {
       state: txosTotal.grid,
       expandedState: txosTotal.modal,
       formatter: fmtInt,
+      fill: 'hold',
       category: 'blockchain',
     },
     {
@@ -1655,6 +1734,7 @@ export const NetworkCharts: React.FC = () => {
       state: utxosTotal.grid,
       expandedState: utxosTotal.modal,
       formatter: fmtInt,
+      fill: 'hold',
       category: 'blockchain',
     },
     {
@@ -1663,6 +1743,7 @@ export const NetworkCharts: React.FC = () => {
       state: contractsTotal.grid,
       expandedState: contractsTotal.modal,
       formatter: fmtInt,
+      fill: 'hold',
       category: 'blockchain',
     },
     {
@@ -1671,6 +1752,7 @@ export const NetworkCharts: React.FC = () => {
       state: sizeTotal.grid,
       expandedState: sizeTotal.modal,
       formatter: fmtBytes,
+      fill: 'hold',
       category: 'blockchain',
     },
     {
@@ -1679,6 +1761,7 @@ export const NetworkCharts: React.FC = () => {
       state: archiveTotal.grid,
       expandedState: archiveTotal.modal,
       formatter: fmtBytes,
+      fill: 'hold',
       category: 'blockchain',
     },
     {
@@ -1687,6 +1770,7 @@ export const NetworkCharts: React.FC = () => {
       state: assets.grid,
       expandedState: assets.modal,
       formatter: fmtInt,
+      fill: 'hold',
       category: 'blockchain',
     },
     // Lelantus — day/total pairs
@@ -1704,6 +1788,7 @@ export const NetworkCharts: React.FC = () => {
       state: shieldedInsTotal.grid,
       expandedState: shieldedInsTotal.modal,
       formatter: fmtInt,
+      fill: 'hold',
       category: 'lelantus',
     },
     {
@@ -1720,6 +1805,7 @@ export const NetworkCharts: React.FC = () => {
       state: shieldedOutsTotal.grid,
       expandedState: shieldedOutsTotal.modal,
       formatter: fmtInt,
+      fill: 'hold',
       category: 'lelantus',
     },
     // DeFi — day/total pairs
@@ -1736,6 +1822,7 @@ export const NetworkCharts: React.FC = () => {
       title: 'DEX volume (total)',
       state: dexVolumeCumulative,
       formatter: fmtUsd,
+      fill: 'hold',
       category: 'defi',
     },
     // DeFi — standalone
@@ -1768,6 +1855,7 @@ export const NetworkCharts: React.FC = () => {
       title: 'DEX Pools created (total)',
       state: poolsCreated,
       formatter: fmtInt,
+      fill: 'hold',
       category: 'defi',
     },
     {
@@ -1775,6 +1863,7 @@ export const NetworkCharts: React.FC = () => {
       title: 'DEX Pools closed (total)',
       state: poolsClosed,
       formatter: fmtInt,
+      fill: 'hold',
       category: 'defi',
       emptyLabel: 'No pools closed yet',
     },
@@ -1817,6 +1906,7 @@ export const NetworkCharts: React.FC = () => {
       title: 'Bridge transfers (total)',
       state: bridgeTransfersTotal,
       formatter: fmtInt,
+      fill: 'hold',
       category: 'defi',
     },
     {
@@ -1831,6 +1921,7 @@ export const NetworkCharts: React.FC = () => {
       title: 'Bridge relayer fees (total)',
       state: bridgeFeesTotal,
       formatter: fmtUsd,
+      fill: 'hold',
       category: 'defi',
     },
     {
@@ -1838,6 +1929,7 @@ export const NetworkCharts: React.FC = () => {
       title: 'Bridge TVL',
       state: bridgeTvl,
       formatter: fmtUsd,
+      fill: 'hold',
       category: 'defi',
     },
     {
@@ -1930,6 +2022,12 @@ export const NetworkCharts: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlSig, stateSig]);
 
+  // Points the expanded single-series chart has on screen, for the exports.
+  const expandedShownRef = useRef<ReadonlyArray<ApiChartPoint> | null>(null);
+  const onExpandedShown = useCallback((points: ReadonlyArray<ApiChartPoint> | null): void => {
+    expandedShownRef.current = points;
+  }, []);
+
   const download = (format: 'csv' | 'svg' | 'png'): void => {
     if (!expanded) return;
     // Split mode is part of the file's identity: Direction and Bridge are
@@ -1976,9 +2074,14 @@ export const NetworkCharts: React.FC = () => {
       else downloadSvgAsPng(svg, `${base}.png`);
       return;
     }
+    // Export what the plot shows: a rangeable chart plots its own fetched window
+    // at the chosen bucket, not a slice of the modal tier. The tier slice is the
+    // fallback for a click that lands before the chart reports.
     const single = expanded.expandedState ?? expanded.state;
-    if (!single?.data) return;
-    const filtered = filterByTimeframe(single.data.series, modalTimeframe);
+    const filtered =
+      expandedShownRef.current ??
+      (single?.data ? filterByTimeframe(single.data.series, modalTimeframe, expanded.fill) : null);
+    if (!filtered) return;
     if (format === 'csv') {
       downloadBlob(toCsv(filtered, expanded.title), `${base}.csv`, 'text/csv;charset=utf-8');
       return;
@@ -2062,6 +2165,7 @@ export const NetworkCharts: React.FC = () => {
               formatter={c.formatter}
               logScale={!!logPerKey[c.key]}
               emptyLabel={c.emptyLabel}
+              fill={c.fill}
               onExpand={() => openChart(c.key)}
               onToggleLog={() => toggleLog(c.key)}
               headerExtra={splitControl}
@@ -2196,7 +2300,9 @@ export const NetworkCharts: React.FC = () => {
                   logScale={!!logPerKey[expanded.key]}
                   hideAmml={hideAmml}
                   emptyLabel={expanded.emptyLabel}
+                  fill={expanded.fill}
                   overlay={expanded.overlay}
+                  onShown={onExpandedShown}
                 />
               )}
             </ModalBody>
@@ -2216,6 +2322,9 @@ const ExpandedChart: React.FC<
      *  server fell back to. Drives the toolbar so it never claims a resolution
      *  the plot isn't showing. */
     onEffectiveInterval: (res: ZoomRes) => void;
+    /** The points on screen (null while none are), so the modal's CSV/SVG/PNG
+     *  export the window and bucket actually plotted rather than a tier slice. */
+    onShown: (points: ReadonlyArray<ApiChartPoint> | null) => void;
   }
 > = ({
   chartKey,
@@ -2228,15 +2337,15 @@ const ExpandedChart: React.FC<
   logScale,
   hideAmml,
   emptyLabel,
+  fill,
   overlay,
   onViewSpan,
   onEffectiveInterval,
+  onShown,
 }) => {
   const ladder = (chartKey && LADDERS[chartKey]) || ['1d'];
   const fetcher = chartKey ? RANGE_FETCHERS[chartKey] : undefined;
-  // `assets` renders through ConfidentialAssetsChart (no range support here), so
-  // it keeps the static filterByTimeframe path despite having a fetcher.
-  const rangeable = !!fetcher && ladder.length > 1 && chartKey !== 'assets';
+  const rangeable = !!chartKey && isRangeable(chartKey);
 
   // Daily full history: anchors each timeframe on the data's real bounds (never
   // epoch-0 → no 1970 axis), and is the 1d rung itself.
@@ -2308,8 +2417,8 @@ const ExpandedChart: React.FC<
   // Static timeframe slices — the non-rangeable path, and the fallback for an
   // overlay whose own chart has no finer tier.
   const filtered = useMemo(
-    () => (state.data && !rangeable ? filterByTimeframe(state.data.series, timeframe) : null),
-    [state.data, timeframe, rangeable],
+    () => (state.data && !rangeable ? filterByTimeframe(state.data.series, timeframe, fill) : null),
+    [state.data, timeframe, rangeable, fill],
   );
   const filteredOverlay = useMemo(
     () => (overlay?.state.data && !overlayRangeable ? filterByTimeframe(overlay.state.data.series, timeframe) : null),
@@ -2349,6 +2458,14 @@ const ExpandedChart: React.FC<
     loading = state.loading;
     error = state.error;
   }
+
+  // Both sources are memoised, so this reports on a real change only.
+  const onShownRef = useRef(onShown);
+  onShownRef.current = onShown;
+  useEffect(() => {
+    onShownRef.current(shown && shown.length > 0 ? shown : null);
+  }, [shown]);
+  useEffect(() => () => onShownRef.current(null), []);
 
   if (!shown || shown.length === 0)
     return (
@@ -2391,7 +2508,15 @@ const ExpandedBlackhole: React.FC<{
       </CenteredNote>
     );
   }
-  return <BlackholeChart series={filtered} logScale={logScale} formatter={formatter} showMarkers />;
+  return (
+    <BlackholeChart
+      series={filtered}
+      history={state.data?.series}
+      logScale={logScale}
+      formatter={formatter}
+      showMarkers
+    />
+  );
 };
 
 // Expanded (modal) variant of a string-keyed multi-series chart.

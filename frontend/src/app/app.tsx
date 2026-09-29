@@ -170,7 +170,9 @@ const App = () => {
         <>
           <TopNav />
           <AssetColorsProvider>
-            <ErrorBoundary>
+            {/* resetKey, not key: a key would remount every layout on each
+                navigation; this only clears a caught error. */}
+            <ErrorBoundary resetKey={pathname}>
               <React.Suspense fallback={<Loading />}>{content}</React.Suspense>
             </ErrorBoundary>
           </AssetColorsProvider>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { styled } from '@linaria/react';
 import { AssetLabel } from '@app/shared/components/AssetLabel';
 import type { ApiPair } from '../api/types';
@@ -73,7 +73,7 @@ const sanitize = (s: string): string => {
 };
 
 export const LiquidityModal: React.FC<Props> = ({ mode, pair, kind, reserve1Human, reserve2Human, onClose }) => {
-  const { headless, connecting, connect } = useWallet();
+  const { headless, support, connecting, connect } = useWallet();
 
   const { aid1 } = pair;
   const { aid2 } = pair;
@@ -98,6 +98,38 @@ export const LiquidityModal: React.FC<Props> = ({ mode, pair, kind, reserve1Huma
   const [quoting, setQuoting] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
+  // One timer for the post-submit follow-up: close after a success, clear an
+  // error / "Cancelled" after a few seconds so the action button unlocks.
+  // Replaced by each new result and cleared on unmount.
+  const feedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearFeedbackTimer = (): void => {
+    if (feedbackTimer.current !== null) clearTimeout(feedbackTimer.current);
+    feedbackTimer.current = null;
+  };
+  useEffect(
+    () => () => {
+      if (feedbackTimer.current !== null) clearTimeout(feedbackTimer.current);
+    },
+    [],
+  );
+  const showFeedback = (next: { kind: 'success' | 'error'; text: string }): void => {
+    clearFeedbackTimer();
+    setFeedback(next);
+    feedbackTimer.current = setTimeout(
+      () => {
+        feedbackTimer.current = null;
+        if (next.kind === 'success') onClose();
+        else setFeedback(null);
+      },
+      next.kind === 'success' ? 1200 : 4000,
+    );
+  };
+  // Editing an amount after a failure retries straight away.
+  const clearError = (): void => {
+    if (feedback?.kind !== 'error') return;
+    clearFeedbackTimer();
+    setFeedback(null);
+  };
 
   const a1 = parseFloat(amount1);
   const a2 = parseFloat(amount2);
@@ -205,22 +237,22 @@ export const LiquidityModal: React.FC<Props> = ({ mode, pair, kind, reserve1Huma
 
   const execute = async (): Promise<void> => {
     setExecuting(true);
+    clearFeedbackTimer();
     setFeedback(null);
     try {
       const res =
         mode === 'withdraw' ? await invokeWithdraw(buildWithdrawArgs(0)) : await invokeAddLiquidity(buildAddArgs(0));
       if (res?.txid) {
-        setFeedback({ kind: 'success', text: mode === 'withdraw' ? 'Withdrawal submitted' : 'Liquidity submitted' });
+        showFeedback({ kind: 'success', text: mode === 'withdraw' ? 'Withdrawal submitted' : 'Liquidity submitted' });
         setAmount1('');
         setAmount2('');
         setLpAmount('');
-        setTimeout(() => onClose(), 1200);
       } else {
-        setFeedback({ kind: 'error', text: 'Cancelled' });
+        showFeedback({ kind: 'error', text: 'Cancelled' });
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setFeedback({ kind: 'error', text: msg.slice(0, 90) });
+      showFeedback({ kind: 'error', text: msg.slice(0, 90) });
     } finally {
       setExecuting(false);
     }
@@ -234,6 +266,7 @@ export const LiquidityModal: React.FC<Props> = ({ mode, pair, kind, reserve1Huma
     busyLabel: 'Submitting…',
     disabledReason: !canSubmit ? 'Enter amount' : quoting ? 'Fetching quote…' : null,
     actionLabel: mode === 'withdraw' ? 'Withdraw' : 'Add liquidity',
+    support,
   });
 
   const title = mode === 'withdraw' ? 'Withdraw Liquidity' : 'Add Liquidity';
@@ -268,7 +301,10 @@ export const LiquidityModal: React.FC<Props> = ({ mode, pair, kind, reserve1Huma
                   inputMode="decimal"
                   placeholder="0"
                   value={lpAmount}
-                  onChange={(e) => setLpAmount(sanitize(e.target.value))}
+                  onChange={(e) => {
+                    clearError();
+                    setLpAmount(sanitize(e.target.value));
+                  }}
                 />
                 <TokenBadge>LP</TokenBadge>
               </Row>
@@ -293,6 +329,7 @@ export const LiquidityModal: React.FC<Props> = ({ mode, pair, kind, reserve1Huma
                   placeholder="0"
                   value={amount1}
                   onChange={(e) => {
+                    clearError();
                     setLastEdited('1');
                     setAmount1(sanitize(e.target.value));
                   }}
@@ -314,6 +351,7 @@ export const LiquidityModal: React.FC<Props> = ({ mode, pair, kind, reserve1Huma
                   placeholder="0"
                   value={amount2}
                   onChange={(e) => {
+                    clearError();
                     setLastEdited('2');
                     setAmount2(sanitize(e.target.value));
                   }}

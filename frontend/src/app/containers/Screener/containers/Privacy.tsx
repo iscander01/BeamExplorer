@@ -57,84 +57,90 @@ const Updated = styled.div`
 export const Privacy: React.FC = () => (
   <Page>
     <h1>Privacy Policy</h1>
-    <Updated>Last updated: 2026-05-26</Updated>
+    <Updated>Last updated: 2026-09-29</Updated>
 
     <p>
-      Beam Explorer is a block-explorer and DEX analytics front-end for the Beam network, operated under{' '}
-      <strong>0xmx.net</strong> (&ldquo;we&rdquo;, &ldquo;us&rdquo;). This policy explains what data we process when you
-      visit beamterminal.0xmx.net or any other site we host under 0xmx.net.
+      Beam Explorer (<strong>explorer.beam.mw</strong>) is a block-explorer and DEX analytics front-end for the Beam
+      network, based on BeamTerminal. This policy explains what data is processed when you use it.
     </p>
 
-    <h2>What we collect</h2>
+    <h2>What is collected</h2>
     <p>
-      <strong>Web-server access logs</strong> — your IP address, request timestamp, requested URL, HTTP status, response
-      size, referrer, and user-agent. These come from nginx and are used for operational diagnostics and abuse
-      mitigation.
+      <strong>Web-server request logs</strong> — the site is a set of static files served by nginx on Railway. Serving a
+      request exposes your IP address, the request time, the requested URL, the HTTP status, the referrer and your
+      user-agent to the hosting platform, which may record them in its logs.
+    </p>
+    <p>
+      The site itself has no backend: every data request your browser makes goes to one of the third-party services
+      listed below, which see the same kind of request metadata.
     </p>
 
-    <h2>What we do not collect</h2>
+    <h2>What is not collected</h2>
     <ul>
-      <li>No accounts, no sign-up, no email collection at the site level.</li>
-      <li>No tracking cookies, no advertising pixels, no third-party analytics.</li>
-      <li>No fingerprinting beyond what nginx logs by default.</li>
+      <li>No accounts, no sign-up, no email collection.</li>
+      <li>No cookies, no advertising pixels, no analytics or tracking scripts.</li>
       <li>
-        UI prefs (timeframe, log toggle, column order) sit in your browser&apos;s <code>localStorage</code> and never
-        leave your device.
+        Your browser&apos;s <code>localStorage</code> holds only UI preferences (such as chart toggles), pair favourites
+        and liquidity-position bookmarks; <code>sessionStorage</code> holds one flag that stops an error page from
+        reloading in a loop. None of it leaves your device.
       </li>
     </ul>
 
     <h2>Third parties in the request path</h2>
     <ul>
       <li>
-        <strong>Cloudflare</strong> sits in front of the site for TLS termination, DDoS protection, and edge caching.
-        Cloudflare therefore sees your IP address and request metadata. See{' '}
-        <a href="https://www.cloudflare.com/privacypolicy/" target="_blank" rel="noopener noreferrer">
-          Cloudflare&apos;s privacy policy
-        </a>
-        .
+        <strong>Railway</strong> hosts the site. It sees your IP address and request metadata for the page and its
+        static files.
       </li>
       <li>
-        <strong>Beam explorer node</strong> — our backend queries a public Beam node on the server side. Your browser
-        does not connect to it directly.
+        <strong>BeamTerminal API</strong> — your browser calls <code>https://beamterminal.0xmx.net/api</code> directly
+        for DEX, asset, mining, bridge, DAO and DApp data. It is operated by the BeamTerminal maintainer, who therefore
+        sees your IP address and request metadata.
       </li>
       <li>
-        <strong>External links</strong> — clicking links to GitHub, X / Twitter, Telegram, Discord, beam.mw, etc. takes
-        you to those services, which have their own privacy policies.
+        <strong>Beam explorer nodes</strong> — the BANS, Halving countdown, Supply and Block explorer pages query the
+        explorer nodes at <code>explorer.0xmx.net</code> directly from your browser. The Block explorer&apos;s network
+        list also includes nodes at <code>BeamSmart.net</code> and <code>explorer-api.beamprivacy.community</code>,
+        which it may query too.
+      </li>
+      <li>
+        <strong>Third-party images</strong> — asset logos, DApp icons and images embedded in DAO proposal text can be
+        loaded from hosts chosen by the asset issuer, the DApp publisher or the proposal author. Loading them exposes
+        your IP address to those hosts.
+      </li>
+      <li>
+        <strong>External links</strong> — clicking links to GitHub, X / Twitter, Telegram, Discord, Etherscan, Arbiscan,
+        beam.mw, etc. takes you to those services, which have their own privacy policies.
       </li>
     </ul>
 
-    <h2>How we use the data</h2>
+    <h2>How the data is used</h2>
     <p>
-      Access logs are only used to keep the service running: diagnose errors, investigate abuse (e.g. scraping or
-      denial-of-service), and tune capacity. We do not profile visitors, sell logs, or share them with advertisers. We
-      do not aggregate logs into reports beyond what a sysadmin needs.
+      Nothing on this site profiles visitors, sells data or shares it with advertisers. Request logs kept by the
+      services above are theirs, under their own policies.
     </p>
 
     <h2>Data retention</h2>
-    <p>nginx access logs are rotated daily and kept for 14 days.</p>
+    <p>
+      The site stores nothing about you on its own. How long request logs are kept is up to the hosting platform and
+      each third-party service listed above.
+    </p>
 
     <h2>Your rights</h2>
     <p>
       If you are in the EU/EEA you have rights under the GDPR (access, erasure, restriction, etc.). Because the only
-      personal data we hold is your IP address inside ephemeral server logs, the typical exercise of those rights is
-      asking us to delete log lines containing your IP. Email <a href="mailto:me@maxnflaxl.dev">me@maxnflaxl.dev</a>{' '}
-      with enough detail (approximate date/time window and the relevant IP) and we&apos;ll handle it.
+      personal data involved is your IP address in request logs, those rights are exercised with whichever service holds
+      the logs: the hosting platform, the BeamTerminal API operator or the explorer-node operators.
     </p>
 
     <h2>Changes to this policy</h2>
     <p>
-      We&apos;ll update this page if the data we process materially changes. The &ldquo;Last updated&rdquo; date at the
-      top of the page always reflects the current revision.
+      This page is updated if the data processed materially changes. The &ldquo;Last updated&rdquo; date at the top of
+      the page always reflects the current revision.
     </p>
 
     <h2>Contact</h2>
-    <p>
-      For anything privacy-related, email <a href="mailto:me@maxnflaxl.dev">me@maxnflaxl.dev</a> or message{' '}
-      <a href="https://t.me/maxnflaxl" target="_blank" rel="noopener noreferrer">
-        @maxnflaxl
-      </a>{' '}
-      on Telegram.
-    </p>
+    <p>For questions about this site, reach out through the BEAM community channels linked in the site footer.</p>
   </Page>
 );
 

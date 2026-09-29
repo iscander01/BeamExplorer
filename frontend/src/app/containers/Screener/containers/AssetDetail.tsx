@@ -190,6 +190,15 @@ const Table = styled(ScreenerTable)`
   }
 `;
 
+// The tables are wider than a phone (the pools table is ~455px at 375px), so
+// they scroll sideways inside this box instead of widening the whole page.
+const TableScroll = styled.div`
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+`;
+
 export const AssetDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -423,76 +432,80 @@ export const AssetDetail: React.FC = () => {
         (asset.pools.length === 0 ? (
           <CenteredNote pad="40px 12px">This asset isn&apos;t in any active pools.</CenteredNote>
         ) : (
-          <Table>
-            <thead>
-              <tr>
-                <th>Pool</th>
-                <th>Tier</th>
-                <th>TVL</th>
-                <th>Amount</th>
-                <th>% circ. supply</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[...asset.pools]
-                .sort((a, b) => (b.tvl_usd ?? -Infinity) - (a.tvl_usd ?? -Infinity))
-                .map((pool) => {
-                  const sym1 = assetIndex.get(pool.aid1)?.short_name ?? null;
-                  const sym2 = assetIndex.get(pool.aid2)?.short_name ?? null;
-                  const amt = pool.amount !== null ? Number(pool.amount) / 10 ** asset.decimals : null;
-                  const pct =
-                    amt !== null && supplyHuman !== null && supplyHuman > 0 ? (amt / supplyHuman) * 100 : null;
-                  return (
-                    <tr
-                      key={pool.pair_id}
-                      onClick={() => navigate(`/pair/${pairUrlId(pool.aid1, pool.aid2, pool.kind)}`)}
-                    >
-                      <td>{sym1 || sym2 ? `${sym1 ?? '?'}/${sym2 ?? '?'}` : `Pool #${pool.pair_id}`}</td>
-                      <td>
-                        <KindBadge kind={pool.kind} />
-                      </td>
-                      <td className="mono">{fmt$(pool.tvl_usd)}</td>
-                      <td className="mono">{amt !== null ? fmtNum(amt, 4) : '—'}</td>
-                      <td className="mono">{pct !== null ? `${pct.toFixed(2)}%` : '—'}</td>
-                    </tr>
-                  );
-                })}
-            </tbody>
-          </Table>
+          <TableScroll>
+            <Table>
+              <thead>
+                <tr>
+                  <th>Pool</th>
+                  <th>Tier</th>
+                  <th>TVL</th>
+                  <th>Amount</th>
+                  <th>% circ. supply</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...asset.pools]
+                  .sort((a, b) => (b.tvl_usd ?? -Infinity) - (a.tvl_usd ?? -Infinity))
+                  .map((pool) => {
+                    const sym1 = assetIndex.get(pool.aid1)?.short_name ?? null;
+                    const sym2 = assetIndex.get(pool.aid2)?.short_name ?? null;
+                    const amt = pool.amount !== null ? Number(pool.amount) / 10 ** asset.decimals : null;
+                    const pct =
+                      amt !== null && supplyHuman !== null && supplyHuman > 0 ? (amt / supplyHuman) * 100 : null;
+                    return (
+                      <tr
+                        key={pool.pair_id}
+                        onClick={() => navigate(`/pair/${pairUrlId(pool.aid1, pool.aid2, pool.kind)}`)}
+                      >
+                        <td>{sym1 || sym2 ? `${sym1 ?? '?'}/${sym2 ?? '?'}` : `Pool #${pool.pair_id}`}</td>
+                        <td>
+                          <KindBadge kind={pool.kind} />
+                        </td>
+                        <td className="mono">{fmt$(pool.tvl_usd)}</td>
+                        <td className="mono">{amt !== null ? fmtNum(amt, 4) : '—'}</td>
+                        <td className="mono">{pct !== null ? `${pct.toFixed(2)}%` : '—'}</td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </Table>
+          </TableScroll>
         ))}
 
       {tab === 'history' &&
         (!history || history.history.length === 0 ? (
           <CenteredNote pad="40px 12px">No history events.</CenteredNote>
         ) : (
-          <Table>
-            <thead>
-              <tr>
-                <th>Height</th>
-                <th>Event</th>
-                <th>Amount</th>
-                <th>Total Supply</th>
-              </tr>
-            </thead>
-            <tbody>
-              {history.history.map((h, i) => {
-                const amt = h.amount ? Number(h.amount.replace(/^[+-]/, '')) / 10 ** asset.decimals : null;
-                const tot = h.total_amount ? Number(h.total_amount) / 10 ** asset.decimals : null;
-                const sign = h.amount?.startsWith('-') ? '-' : '+';
-                const color = h.event === 'Burn' || sign === '-' ? '#f25f5b' : '#00f6d2';
-                return (
-                  <tr key={`${h.height}-${i}`} style={{ cursor: 'default' }}>
-                    <td className="mono">{h.height}</td>
-                    <td style={{ color, fontWeight: 600 }}>{h.event}</td>
-                    <td className="mono" style={{ color }}>
-                      {amt !== null ? `${sign}${fmtNum(amt, 4)}` : '—'}
-                    </td>
-                    <td className="mono">{tot !== null ? fmtNum(tot, 0) : '—'}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </Table>
+          <TableScroll>
+            <Table>
+              <thead>
+                <tr>
+                  <th>Height</th>
+                  <th>Event</th>
+                  <th>Amount</th>
+                  <th>Total Supply</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.history.map((h, i) => {
+                  const amt = h.amount ? Number(h.amount.replace(/^[+-]/, '')) / 10 ** asset.decimals : null;
+                  const tot = h.total_amount ? Number(h.total_amount) / 10 ** asset.decimals : null;
+                  const sign = h.amount?.startsWith('-') ? '-' : '+';
+                  const color = h.event === 'Burn' || sign === '-' ? '#f25f5b' : '#00f6d2';
+                  return (
+                    <tr key={`${h.height}-${i}`} style={{ cursor: 'default' }}>
+                      <td className="mono">{h.height}</td>
+                      <td style={{ color, fontWeight: 600 }}>{h.event}</td>
+                      <td className="mono" style={{ color }}>
+                        {amt !== null ? `${sign}${fmtNum(amt, 4)}` : '—'}
+                      </td>
+                      <td className="mono">{tot !== null ? fmtNum(tot, 0) : '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </Table>
+          </TableScroll>
         ))}
 
       {tab === 'distribution' &&
@@ -503,47 +516,49 @@ export const AssetDetail: React.FC = () => {
         ) : !distribution || (distribution.entries.length === 0 && distribution.unlocked === '0') ? (
           <CenteredNote pad="40px 12px">No distribution data.</CenteredNote>
         ) : (
-          <Table>
-            <thead>
-              <tr>
-                <th>Cid</th>
-                <th>Kind</th>
-                <th>Amount</th>
-                <th>% circ. supply</th>
-              </tr>
-            </thead>
-            <tbody>
-              {distribution.entries.map((e) => {
-                const amt = Number(e.amount) / 10 ** asset.decimals;
-                const pct =
-                  Number(distribution.total) > 0 ? (Number(e.amount) / Number(distribution.total)) * 100 : null;
-                return (
-                  <tr key={e.cid} style={{ cursor: 'default' }}>
-                    <td>
-                      <CidLink to={`/explorer/beam?network=mainnet&type=contract&id=${e.cid}`} title={e.cid}>
-                        {`${e.cid.slice(0, 6)}…${e.cid.slice(-4)}`}
-                      </CidLink>
-                    </td>
-                    <td>{e.kind || '—'}</td>
-                    <td className="mono">{fmtNum(amt, 4)}</td>
-                    <td className="mono">{pct !== null ? `${pct.toFixed(2)}%` : '—'}</td>
-                  </tr>
-                );
-              })}
-              {distribution.unlocked !== '0' && (
-                <tr style={{ cursor: 'default' }}>
-                  <td>Unlocked</td>
-                  <td>—</td>
-                  <td className="mono">{fmtNum(Number(distribution.unlocked) / 10 ** asset.decimals, 4)}</td>
-                  <td className="mono">
-                    {Number(distribution.total) > 0
-                      ? `${((Number(distribution.unlocked) / Number(distribution.total)) * 100).toFixed(2)}%`
-                      : '—'}
-                  </td>
+          <TableScroll>
+            <Table>
+              <thead>
+                <tr>
+                  <th>Cid</th>
+                  <th>Kind</th>
+                  <th>Amount</th>
+                  <th>% circ. supply</th>
                 </tr>
-              )}
-            </tbody>
-          </Table>
+              </thead>
+              <tbody>
+                {distribution.entries.map((e) => {
+                  const amt = Number(e.amount) / 10 ** asset.decimals;
+                  const pct =
+                    Number(distribution.total) > 0 ? (Number(e.amount) / Number(distribution.total)) * 100 : null;
+                  return (
+                    <tr key={e.cid} style={{ cursor: 'default' }}>
+                      <td>
+                        <CidLink to={`/explorer/beam?network=mainnet&type=contract&id=${e.cid}`} title={e.cid}>
+                          {`${e.cid.slice(0, 6)}…${e.cid.slice(-4)}`}
+                        </CidLink>
+                      </td>
+                      <td>{e.kind || '—'}</td>
+                      <td className="mono">{fmtNum(amt, 4)}</td>
+                      <td className="mono">{pct !== null ? `${pct.toFixed(2)}%` : '—'}</td>
+                    </tr>
+                  );
+                })}
+                {distribution.unlocked !== '0' && (
+                  <tr style={{ cursor: 'default' }}>
+                    <td>Unlocked</td>
+                    <td>—</td>
+                    <td className="mono">{fmtNum(Number(distribution.unlocked) / 10 ** asset.decimals, 4)}</td>
+                    <td className="mono">
+                      {Number(distribution.total) > 0
+                        ? `${((Number(distribution.unlocked) / Number(distribution.total)) * 100).toFixed(2)}%`
+                        : '—'}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </Table>
+          </TableScroll>
         ))}
     </Page>
   );

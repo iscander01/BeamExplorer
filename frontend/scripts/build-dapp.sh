@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DAPP_NAME="beamterminal"
+# Own name and GUID, distinct from upstream BeamTerminal's DApp, so the wallet
+# installs Beam Explorer next to it instead of treating one as an update of the other.
+DAPP_NAME="beamexplorer"
 MANIFEST_NAME="Beam Explorer"
 MANIFEST_DESCRIPTION="Beam block explorer and DEX analytics — charts, blocks, pairs, swap."
 MANIFEST_VERSION_PREFIX="1.0"
@@ -9,7 +11,7 @@ MANIFEST_ICON="localapp/app/favicon.svg"
 MANIFEST_URL="localapp/app/index.html"
 MANIFEST_API_VERSION="7.3"
 MANIFEST_MIN_API_VERSION="7.3"
-MANIFEST_GUID="d5669ebc08394e15a394011a8020dd9a"
+MANIFEST_GUID="727f1dff1d614d268f837bd18fdbcd22"
 
 COMMIT_COUNT="$(git rev-list --count HEAD)"
 VERSION="${MANIFEST_VERSION_PREFIX}.${COMMIT_COUNT}"
@@ -26,7 +28,8 @@ test -f html/favicon.svg
 
 # Drop any prior build, including a stale copy sitting in html/ from a previous
 # run — otherwise `cp -r html/*` below would bundle the .dapp inside itself.
-rm -rf "${DAPP_NAME}" "${DAPP_NAME}.dapp" "html/${DAPP_NAME}.dapp"
+# beamterminal.dapp is the bundle's name from before the rename.
+rm -rf "${DAPP_NAME}" "${DAPP_NAME}.dapp" "html/${DAPP_NAME}.dapp" "html/beamterminal.dapp"
 mkdir -p "${DAPP_NAME}/app"
 cp -r html/* "${DAPP_NAME}/app/"
 
@@ -55,7 +58,7 @@ EOF
 )
 
 # Publish the bundle into html/ so the deploy's `rsync html/ → /var/www` step
-# serves it at the web root for the nav's "Download DApp" button (/beamterminal.dapp).
+# serves it at the web root for the nav's "Download DApp" button (/beamexplorer.dapp).
 cp "${DAPP_NAME}.dapp" "html/${DAPP_NAME}.dapp"
 
 echo "Created ${DAPP_NAME}.dapp (also copied to html/) with version ${VERSION}"

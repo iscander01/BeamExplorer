@@ -491,6 +491,24 @@ const BtAxis = styled.div`
   margin-top: 4px;
 `;
 
+// Phone widths: the pools table (hashrate sparkline + numeric columns) is wider
+// than the viewport, which made the whole document scroll sideways. Below 760px
+// the tables scroll inside their card instead; above it there is room, and no
+// scroll container is set so the sparkline tooltip over the first row isn't
+// clipped.
+const TableScroll = styled.div`
+  @media (max-width: 760px) {
+    overflow-x: auto;
+  }
+`;
+
+// Secondary pool columns dropped on phones so the table needs less scrolling.
+const hideSm = css`
+  @media (max-width: 600px) {
+    display: none;
+  }
+`;
+
 const pagerCss = css`
   display: -webkit-box;
   display: flex;
@@ -760,61 +778,63 @@ export const Mining: React.FC = () => {
         )}
         {sorted.length === 0 && !poolErr && <Loading size="sm" label="Loading pool data…" />}
         {sorted.length > 0 && (
-          <DataTable>
-            <thead>
-              <tr>
-                <th style={{ width: 32 }}>#</th>
-                <th>Pool</th>
-                <th>Hashrate</th>
-                <th className="right">Miners</th>
-                <th className="right">Workers</th>
-                <th className="right">Blocks (1h)</th>
-                <th className="right">Block Height</th>
-                <th className="right">Last Found</th>
-                <th aria-label="Details" style={{ width: 20 }} />
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((p: ApiMiningPool, idx) => {
-                const offline = p.hashrate == null;
-                return (
-                  <tr key={p.id} style={{ opacity: offline ? 0.55 : 1 }}>
-                    <td className="muted">{idx + 1}</td>
-                    <td>
-                      <div>
-                        <a href={p.website} target="_blank" rel="noreferrer">
-                          {p.name}
-                        </a>
-                      </div>
-                      {p.payout_scheme && (
-                        <div style={{ fontSize: 11, color: theme.color.muted, marginTop: 2 }}>
-                          {p.fee != null ? `${p.fee}% ` : ''}
-                          {p.payout_scheme}
+          <TableScroll>
+            <DataTable>
+              <thead>
+                <tr>
+                  <th style={{ width: 32 }}>#</th>
+                  <th>Pool</th>
+                  <th>Hashrate</th>
+                  <th className="right">Miners</th>
+                  <th className={`right ${hideSm}`}>Workers</th>
+                  <th className={`right ${hideSm}`}>Blocks (1h)</th>
+                  <th className={`right ${hideSm}`}>Block Height</th>
+                  <th className="right">Last Found</th>
+                  <th aria-label="Details" style={{ width: 20 }} />
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((p: ApiMiningPool, idx) => {
+                  const offline = p.hashrate == null;
+                  return (
+                    <tr key={p.id} style={{ opacity: offline ? 0.55 : 1 }}>
+                      <td className="muted">{idx + 1}</td>
+                      <td>
+                        <div>
+                          <a href={p.website} target="_blank" rel="noreferrer">
+                            {p.name}
+                          </a>
                         </div>
-                      )}
-                    </td>
-                    <td style={{ position: 'relative' }}>
-                      <HashrateCell
-                        series={p.hashrate_series ?? []}
-                        hashrate={p.hashrate}
-                        barWidth={`${((p.hashrate ?? 0) / maxHashrate) * 100}%`}
-                      />
-                    </td>
-                    <td className="right">{p.miners != null ? p.miners.toLocaleString() : '—'}</td>
-                    <td className="right">{p.workers != null ? p.workers.toLocaleString() : '—'}</td>
-                    <td className="right">{p.blocks_past_hour ?? '—'}</td>
-                    <td className="right">
-                      {p.last_block_height != null ? p.last_block_height.toLocaleString() : '—'}
-                    </td>
-                    <td className="right">{fmtAge(p.last_block_ts)}</td>
-                    <td>
-                      <Dot data-kind={offline ? 'error' : 'live'} />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </DataTable>
+                        {p.payout_scheme && (
+                          <div style={{ fontSize: 11, color: theme.color.muted, marginTop: 2 }}>
+                            {p.fee != null ? `${p.fee}% ` : ''}
+                            {p.payout_scheme}
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ position: 'relative' }}>
+                        <HashrateCell
+                          series={p.hashrate_series ?? []}
+                          hashrate={p.hashrate}
+                          barWidth={`${((p.hashrate ?? 0) / maxHashrate) * 100}%`}
+                        />
+                      </td>
+                      <td className="right">{p.miners != null ? p.miners.toLocaleString() : '—'}</td>
+                      <td className={`right ${hideSm}`}>{p.workers != null ? p.workers.toLocaleString() : '—'}</td>
+                      <td className={`right ${hideSm}`}>{p.blocks_past_hour ?? '—'}</td>
+                      <td className={`right ${hideSm}`}>
+                        {p.last_block_height != null ? p.last_block_height.toLocaleString() : '—'}
+                      </td>
+                      <td className="right">{fmtAge(p.last_block_ts)}</td>
+                      <td>
+                        <Dot data-kind={offline ? 'error' : 'live'} />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </DataTable>
+          </TableScroll>
         )}
       </Card>
 
@@ -924,44 +944,46 @@ export const Mining: React.FC = () => {
         ) : (
           blocksLoaded && (
             <>
-              <DataTable>
-                <thead>
-                  <tr>
-                    <th>Block</th>
-                    <th>Mined by</th>
-                    <th className="right">Age</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {blocks.map((b, i) => {
-                    const site = b.mined_by ? poolByName[b.mined_by] ?? null : null;
-                    // Block solve time = gap to the next-older block in the list.
-                    const older = blocks[i + 1];
-                    const interval = older ? (new Date(b.ts).getTime() - new Date(older.ts).getTime()) / 1000 : null;
-                    return (
-                      <tr key={b.height}>
-                        <td className="mono">{b.height.toLocaleString()}</td>
-                        <td>
-                          {b.mined_by ? (
-                            site ? (
-                              <a href={site} target="_blank" rel="noreferrer">
-                                {b.mined_by}
-                              </a>
+              <TableScroll>
+                <DataTable>
+                  <thead>
+                    <tr>
+                      <th>Block</th>
+                      <th>Mined by</th>
+                      <th className="right">Age</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {blocks.map((b, i) => {
+                      const site = b.mined_by ? poolByName[b.mined_by] ?? null : null;
+                      // Block solve time = gap to the next-older block in the list.
+                      const older = blocks[i + 1];
+                      const interval = older ? (new Date(b.ts).getTime() - new Date(older.ts).getTime()) / 1000 : null;
+                      return (
+                        <tr key={b.height}>
+                          <td className="mono">{b.height.toLocaleString()}</td>
+                          <td>
+                            {b.mined_by ? (
+                              site ? (
+                                <a href={site} target="_blank" rel="noreferrer">
+                                  {b.mined_by}
+                                </a>
+                              ) : (
+                                b.mined_by
+                              )
                             ) : (
-                              b.mined_by
-                            )
-                          ) : (
-                            <span className="muted">—</span>
-                          )}
-                        </td>
-                        <td className="right">
-                          <AgeCell iso={b.ts} interval={interval} />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </DataTable>
+                              <span className="muted">—</span>
+                            )}
+                          </td>
+                          <td className="right">
+                            <AgeCell iso={b.ts} interval={interval} />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </DataTable>
+              </TableScroll>
               <div className={pagerCss}>
                 <Btn type="button" disabled={blockPage === 0} onClick={() => setBlockPage((p) => Math.max(0, p - 1))}>
                   &#8592; Newer

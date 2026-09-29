@@ -203,9 +203,9 @@ docker compose run --rm api node dist/scripts/migrate.js   # applies all migrati
 docker compose up -d indexer api
 
 # 5. Frontend bundle (build-dapp.sh runs build:prod, then bundles + copies
-#    beamterminal.dapp into html/ so the nav's "Download DApp" button works).
+#    beamexplorer.dapp into html/ so the nav's "Download DApp" button works).
 sudo apt-get install -y zip                                  # build-dapp.sh zips the .dapp
-(cd frontend && bash scripts/build-dapp.sh)                 # writes frontend/html/ + html/beamterminal.dapp
+(cd frontend && bash scripts/build-dapp.sh)                 # writes frontend/html/ + html/beamexplorer.dapp
 sudo mkdir -p /var/www/beamterminal
 sudo rsync -av --delete frontend/html/ /var/www/beamterminal/
 sudo chown -R www-data:www-data /var/www/beamterminal
@@ -231,7 +231,7 @@ docker compose build api indexer
 docker compose up -d api indexer
 
 # Frontend: build-dapp.sh runs build:prod and also bundles the .dapp into html/
-# so the "Download DApp" button serves it from the web root (/beamterminal.dapp).
+# so the "Download DApp" button serves it from the web root (/beamexplorer.dapp).
 (cd frontend && bash scripts/build-dapp.sh)
 
 # Publish to the nginx web root (nginx serves /var/www/beamterminal, NOT frontend/html).

@@ -1,5 +1,6 @@
-// Tiny fetch wrapper for /api/*. Same-origin in prod (nginx proxies /api),
-// proxied via webpack dev-server in dev.
+// Tiny fetch wrapper for /api/*. Same-origin on beamterminal.0xmx.net; every
+// other host (explorer.beam.mw, the wallet DApp, dev) calls the public API at
+// https://beamterminal.0xmx.net/api directly — see BASE below.
 //
 // All endpoints are open + GET-only — no auth headers.
 
@@ -69,35 +70,52 @@ class ApiError extends Error {
 // banners resolve both pool assets in the same poll tick.
 const inflight = new Map<string, Promise<unknown>>();
 
+// fetch has no timeout of its own, and a stalled request would stay in
+// `inflight` — every later poll of the path would join it and never refresh.
+// The abort also covers the body read.
+const REQUEST_TIMEOUT_MS = 15_000;
+
 async function get<T>(path: string): Promise<T> {
   const existing = inflight.get(path);
   if (existing) return existing as Promise<T>;
   const p = (async () => {
-    const res = await fetch(`${BASE}${path}`, {
-      method: 'GET',
-      headers: { accept: 'application/json' },
-    });
-    if (!res.ok) {
-      let code = 'HTTP_ERROR';
-      let msg = `HTTP ${res.status}`;
-      try {
-        const body = (await res.json()) as { error?: { code: string; message: string } };
-        if (body.error) {
-          code = body.error.code;
-          msg = body.error.message;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const res = await fetch(`${BASE}${path}`, {
+        method: 'GET',
+        headers: { accept: 'application/json' },
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        let code = 'HTTP_ERROR';
+        let msg = `HTTP ${res.status}`;
+        try {
+          const body = (await res.json()) as { error?: { code: string; message: string } };
+          if (body.error) {
+            code = body.error.code;
+            msg = body.error.message;
+          }
+        } catch {
+          /* ignore */
         }
-      } catch {
-        /* ignore */
+        throw new ApiError(res.status, code, msg);
       }
-      throw new ApiError(res.status, code, msg);
+      return (await res.json()) as T;
+    } catch (err) {
+      // Only our timer aborts, so an aborted signal means the timeout fired.
+      if (controller.signal.aborted) throw new ApiError(0, 'TIMEOUT', 'Request timed out');
+      throw err;
+    } finally {
+      clearTimeout(timer);
     }
-    return (await res.json()) as T;
   })();
   inflight.set(path, p);
   try {
     return (await p) as T;
   } finally {
-    inflight.delete(path);
+    // Settled either way (data, HTTP error, timeout): the next call starts fresh.
+    if (inflight.get(path) === p) inflight.delete(path);
   }
 }
 

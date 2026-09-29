@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { styled } from '@linaria/react';
 import { theme } from './shared';
 import { CenteredNote } from '../../components/CenteredNote';
@@ -17,6 +17,8 @@ const PAD_R = 16;
 const PAD_T = 8;
 const PAD_B = 26;
 const LANE_H = 28;
+// Gap between the hovered point and the tooltip.
+const TIP_GAP = 10;
 
 interface Tick {
   x: number;
@@ -33,6 +35,7 @@ function fmtDate(ms: number): string {
 export const ActionTimeline: React.FC<{ actions: ApiBansAction[] }> = ({ actions }) => {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(720);
   const [hidden, setHidden] = useState<Set<BansCategory>>(new Set());
   const [hover, setHover] = useState<{ x: number; y: number; action: ApiBansAction } | null>(null);
@@ -112,6 +115,23 @@ export const ActionTimeline: React.FC<{ actions: ApiBansAction[] }> = ({ actions
     }
   }, [visibleTicks, width, height]);
 
+  // Place the tooltip from its real size, before paint: right of the point
+  // unless that would cross the right edge (then left of it), and hanging down
+  // from the point unless that would cross the bottom (then above it). Clamped
+  // to the plot box, so hovering never overflows the panel or changes layout.
+  useLayoutEffect(() => {
+    const tip = tipRef.current;
+    if (!tip || !hover) return;
+    const w = tip.offsetWidth;
+    const h = tip.offsetHeight;
+    let left = hover.x + TIP_GAP;
+    if (left + w > width) left = hover.x - TIP_GAP - w;
+    let top = hover.y - 6;
+    if (top + h > height) top = hover.y + 6 - h;
+    tip.style.left = `${Math.max(0, Math.min(left, width - w))}px`;
+    tip.style.top = `${Math.max(0, Math.min(top, height - h))}px`;
+  }, [hover, width, height]);
+
   function onMove(e: React.MouseEvent<SVGSVGElement>): void {
     const rect = e.currentTarget.getBoundingClientRect();
     const mx = e.clientX - rect.left;
@@ -130,7 +150,14 @@ export const ActionTimeline: React.FC<{ actions: ApiBansAction[] }> = ({ actions
         best = t;
       }
     }
-    setHover(best ? { x: best.x, y: laneY(best.laneIdx) + LANE_H / 2, action: best.action } : null);
+    // Keep the same state object while the pointer stays on one tick, so moving
+    // within it doesn't re-render or re-measure the tooltip.
+    const hit = best;
+    setHover((prev) => {
+      if (!hit) return null;
+      if (prev && prev.action === hit.action && prev.x === hit.x) return prev;
+      return { x: hit.x, y: laneY(hit.laneIdx) + LANE_H / 2, action: hit.action };
+    });
   }
 
   function toggle(cat: BansCategory): void {
@@ -204,7 +231,7 @@ export const ActionTimeline: React.FC<{ actions: ApiBansAction[] }> = ({ actions
         {hover && <HoverDot style={{ left: hover.x, top: hover.y }} />}
 
         {hover && (
-          <Tip style={{ left: Math.min(hover.x + 10, Math.max(width - 170, 0)), top: hover.y - 6 }}>
+          <Tip ref={tipRef}>
             <TipName>{hover.action.name || '(no name)'}</TipName>
             <TipMeta>
               {hover.action.method} · h {hover.action.height}
@@ -264,10 +291,15 @@ const Swatch = styled.span`
      which is why the swatch previously sat flush against the text. */
   margin-right: 6px;
 `;
+// No overflow-x here: the SVG is always sized to this box, and a scroll
+// container would clip the absolutely positioned tooltip and grow scrollbars
+// while it is shown. display: block drops the inline descender gap under it.
 const SvgWrap = styled.div`
   position: relative;
   width: 100%;
-  overflow-x: auto;
+  & > svg {
+    display: block;
+  }
 `;
 // Above the SVG so ticks still draw over the gridlines; pointer-events: none
 // lets the SVG underneath keep handling hover.
@@ -286,8 +318,14 @@ const HoverDot = styled.span`
   background: ${theme.color.text};
   pointer-events: none;
 `;
+// Positioned by the layout effect above; starts at the top-left corner so the
+// first measurement doesn't happen at a spot that could overflow. The width cap
+// (with ellipsis on each line) keeps long BANS names from outgrowing the plot.
 const Tip = styled.div`
   position: absolute;
+  top: 0;
+  left: 0;
+  max-width: min(260px, 100%);
   pointer-events: none;
   z-index: 5;
   background: ${theme.color.surface3};
@@ -301,8 +339,12 @@ const Tip = styled.div`
 const TipName = styled.div`
   color: ${theme.color.accent};
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
 `;
 const TipMeta = styled.div`
   color: ${theme.color.muted};
   font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 `;

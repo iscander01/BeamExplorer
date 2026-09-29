@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { styled } from '@linaria/react';
 import { PALLETE_ASSETS } from '@app/shared/constants';
 import { usePolled } from '../../../hooks';
@@ -23,6 +23,15 @@ import { tierColor } from '../../../components/KindBadge';
 import { TimeChart, fmtUsd } from './daoShared';
 
 const TIER_LABEL = ['0.05%', '0.30%', '1.00%'];
+
+const DAY_MS = 86_400_000;
+
+// First UTC day ("YYYY-MM-DD") of a rolling window of `days` calendar days that
+// ends today. The series carries only days with revenue, so "last 30 days" has
+// to be cut by date — the last 30 entries could reach back months.
+function windowStartDay(days: number, nowMs: number): string {
+  return new Date(nowMs - (days - 1) * DAY_MS).toISOString().slice(0, 10);
+}
 
 const SOURCE_COLOR: Record<string, string> = {
   DEX: PALLETE_ASSETS[0],
@@ -84,11 +93,19 @@ const HBar = styled.div`
 export const DaoRevenue: React.FC = () => {
   const { data: d, error } = usePolled<ApiDaoRevenue>(() => api.daoRevenue('source'), [], 60_000);
 
-  const dailySeries = (d?.series ?? []).map((s) => ({
-    label: s.day,
-    value: Object.values(s.by_asset).reduce((a, b) => a + b, 0),
-  }));
-  const d30 = dailySeries.slice(-30).reduce((a, b) => a + b.value, 0);
+  // Memoized so TimeChart only re-feeds (and re-fits) its series when the data
+  // actually changes, not on every render.
+  const dailySeries = useMemo(
+    () =>
+      (d?.series ?? []).map((s) => ({
+        label: s.day,
+        value: Object.values(s.by_asset).reduce((a, b) => a + b, 0),
+      })),
+    [d],
+  );
+  // Labels are "YYYY-MM-DD" (UTC days), so a string compare is a date compare.
+  const d30Start = windowStartDay(30, Date.now());
+  const d30 = dailySeries.filter((p) => p.label >= d30Start).reduce((a, b) => a + b.value, 0);
 
   return (
     <Page>

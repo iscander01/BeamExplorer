@@ -7,17 +7,56 @@
 
 import { useEffect, useState } from 'react';
 import connector from '@core/connector';
+// eslint-disable-next-line import/no-named-as-default, import/extensions
+import BeamDappConnector from '@core/BeamDappConnector.js';
 import { ensureConnected, isInsideWallet } from '@core/walletEnv';
 import { AddLiquidityApi, CreatePoolApi, LoadPoolsList, TradePoolApi, WithdrawApi } from '@core/api';
 import { pairKey } from './components/format';
 
+/** BEAM Web Wallet in the Chrome Web Store (same target as the connector's own
+ *  "Install Web Wallet" button). */
+export const WEB_WALLET_URL =
+  'https://chrome.google.com/webstore/detail/beam-web-wallet/ilhaljfiglknggcoegeknjghdgampffk';
+/** Desktop / mobile BEAM wallet downloads, for browsers the extension can't run in. */
+export const WALLET_DOWNLOADS_URL = 'https://beam.mw/downloads';
+
+/**
+ * How this page can reach a wallet that signs transactions:
+ *   'wallet'    - inside the BEAM desktop / mobile wallet (auto-connects).
+ *   'extension' - desktop Chrome, via the BEAM Web Wallet extension.
+ *   'none'      - anything else. The connector would fall back to its key-less
+ *                 headless WASM client there, which can read but never sign, so
+ *                 trading is not offered at all.
+ */
+export type TradeSupport = 'wallet' | 'extension' | 'none';
+
+function tradeSupport(): TradeSupport {
+  if (isInsideWallet()) return 'wallet';
+  // Mirrors the connector's WEB branch: it only tries the extension on desktop
+  // Chrome (not Edge) and goes headless everywhere else.
+  if (BeamDappConnector.isWeb() && BeamDappConnector.isChrome()) return 'extension';
+  return 'none';
+}
+
+/** Connected to a wallet that can sign. A headless (WASM) connection is
+ *  read-only, so it doesn't count. */
+function hasSigner(): boolean {
+  return connector.isConnected() && connector.getEnvironment() !== 'headless';
+}
+
 interface WalletState {
-  /** True when no wallet API is currently reachable. */
+  /** True when no signing wallet is connected (the key-less headless client
+   *  counts as not connected). */
   headless: boolean;
   /** True when running inside the BEAM wallet's webview. */
   inWallet: boolean;
+  /** Whether a signing wallet is reachable from this browser at all. */
+  support: TradeSupport;
   /** True while a connect attempt is in flight. */
   connecting: boolean;
+  /** The last on-demand connect attempt failed (e.g. Chrome without the
+   *  extension, or the user rejected it). Cleared by the next attempt. */
+  connectFailed: boolean;
 }
 
 // Module-level store shared by every `useWallet` instance. The connector is a
@@ -26,25 +65,35 @@ interface WalletState {
 let cached: WalletState = {
   headless: true,
   inWallet: isInsideWallet(),
+  support: tradeSupport(),
   connecting: false,
+  connectFailed: false,
 };
 
 type Listener = () => void;
 const listeners = new Set<Listener>();
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
-function snapshot(connecting: boolean): WalletState {
+function snapshot(connecting: boolean, connectFailed: boolean): WalletState {
   return {
-    headless: !connector.isConnected(),
+    headless: !hasSigner(),
     inWallet: isInsideWallet(),
+    support: tradeSupport(),
     connecting,
+    connectFailed,
   };
 }
 
 /** Re-read the connector and notify subscribers when any field changed. */
-function refresh(connecting = cached.connecting): void {
-  const next = snapshot(connecting);
-  if (next.headless === cached.headless && next.inWallet === cached.inWallet && next.connecting === cached.connecting) {
+function refresh(connecting = cached.connecting, connectFailed = cached.connectFailed): void {
+  const next = snapshot(connecting, connectFailed);
+  if (
+    next.headless === cached.headless &&
+    next.inWallet === cached.inWallet &&
+    next.support === cached.support &&
+    next.connecting === cached.connecting &&
+    next.connectFailed === cached.connectFailed
+  ) {
     return;
   }
   cached = next;
@@ -73,18 +122,35 @@ function subscribe(listener: Listener): () => void {
 }
 
 /** Ask the wallet to connect. `connecting` is shared state, so every mounted
- *  hook shows the in-flight status, not only the one whose button was pressed. */
+ *  hook shows the in-flight status, not only the one whose button was pressed.
+ *  Resolves false without trying where no signing wallet can exist, so the
+ *  key-less headless client is never started for trading. */
 async function connect(): Promise<boolean> {
-  refresh(true);
+  if (hasSigner()) return true;
+  if (tradeSupport() === 'none') return false;
+  // Outside the wallet every connect is on demand (a button press): one
+  // attempt, no background retry loop. Without the extension the connector's
+  // default auto-reconnect would re-post the request up to 10 times, each one
+  // waiting out its 30s timeout. In-wallet reconnects are left as they are.
+  if (!isInsideWallet()) connector.config.autoReconnect = false;
+  refresh(true, false);
+  let ok = false;
   try {
-    return await ensureConnected();
+    ok = (await ensureConnected()) && hasSigner();
+    return ok;
   } finally {
-    refresh(false);
+    refresh(false, !ok);
   }
 }
 
+/** Connect on demand, or throw when no signing wallet is available. */
+async function requireSigner(): Promise<void> {
+  const ok = await connect();
+  if (!ok) throw new Error('Wallet not connected');
+}
+
 export function useWallet(): WalletState & { connect: () => Promise<boolean> } {
-  const [state, setState] = useState<WalletState>(() => snapshot(cached.connecting));
+  const [state, setState] = useState<WalletState>(() => snapshot(cached.connecting, cached.connectFailed));
 
   useEffect(() => {
     const unsubscribe = subscribe(() => setState(cached));
@@ -183,9 +249,8 @@ export interface TradeResult {
 }
 
 export async function invokeTrade(args: TradeArgs): Promise<TradeResult> {
-  // Ensure a wallet is connected before invoking. No-op when already connected.
-  const ok = await ensureConnected();
-  if (!ok) throw new Error('Wallet not connected');
+  // Ensure a signing wallet is connected before invoking. No-op when already connected.
+  await requireSigner();
   return TradePoolApi<TradeResult>(args);
 }
 
@@ -217,14 +282,12 @@ export interface LiquidityResult {
 }
 
 export async function invokeAddLiquidity(args: AddLiquidityArgs): Promise<LiquidityResult> {
-  const ok = await ensureConnected();
-  if (!ok) throw new Error('Wallet not connected');
+  await requireSigner();
   return AddLiquidityApi<LiquidityResult>(args);
 }
 
 export async function invokeWithdraw(args: WithdrawArgs): Promise<LiquidityResult> {
-  const ok = await ensureConnected();
-  if (!ok) throw new Error('Wallet not connected');
+  await requireSigner();
   return WithdrawApi<LiquidityResult>(args);
 }
 
@@ -237,7 +300,6 @@ export interface CreatePoolArgs {
 // Registers an empty pool for (aid1, aid2, kind). It must then be seeded via
 // Add Liquidity. CreatePoolApi takes a single-element array.
 export async function invokeCreatePool(args: CreatePoolArgs): Promise<{ txid?: string }> {
-  const ok = await ensureConnected();
-  if (!ok) throw new Error('Wallet not connected');
+  await requireSigner();
   return CreatePoolApi<{ txid?: string }>([args]);
 }

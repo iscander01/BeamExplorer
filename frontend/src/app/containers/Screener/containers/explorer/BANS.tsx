@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { styled } from '@linaria/react';
+import { css } from '@linaria/core';
 import { EXPLORER_API } from '@app/shared/constants';
 import { CenteredNote } from '../../components/CenteredNote';
 import {
@@ -231,6 +232,16 @@ const JumpNav = styled.nav`
   border-radius: ${theme.radius.lg};
   padding: 5px 10px 5px 16px;
   margin-bottom: 16px;
+`;
+
+// Jump-nav targets stop below the sticky JumpNav instead of under it: its 8px
+// top offset plus one row of buttons is ~56px, so 72px leaves a small gap. On
+// narrow screens the nav wraps to two rows.
+const jumpTarget = css`
+  scroll-margin-top: 72px;
+  @media (max-width: 560px) {
+    scroll-margin-top: 112px;
+  }
 `;
 
 const JumpLabel = styled.span`
@@ -743,7 +754,7 @@ export const BANS: React.FC = () => {
         </div>
       </ContractBar>
 
-      <StatGrid ref={overviewRef}>
+      <StatGrid ref={overviewRef} className={jumpTarget}>
         <StatCard>
           <Label>Total domains</Label>
           <Value style={{ color: theme.color.accent }}>{fmtNum(kpi.total)}</Value>
@@ -771,7 +782,7 @@ export const BANS: React.FC = () => {
         </StatCard>
       </StatGrid>
 
-      <Panel ref={timelineRef}>
+      <Panel ref={timelineRef} className={jumpTarget}>
         <PanelHeader>
           <PanelTitle>Activity timeline</PanelTitle>
           <PanelMeta>{apiActions.length > 0 ? `${apiActions.length} actions` : '—'}</PanelMeta>
@@ -781,7 +792,7 @@ export const BANS: React.FC = () => {
         </div>
       </Panel>
 
-      <Panel ref={domainsRef}>
+      <Panel ref={domainsRef} className={jumpTarget}>
         <PanelHeader>
           <PanelTitle>Domains</PanelTitle>
           <PanelMeta>
@@ -945,7 +956,7 @@ export const BANS: React.FC = () => {
         {domainsPager}
       </Panel>
 
-      <Panel ref={activityRef}>
+      <Panel ref={activityRef} className={jumpTarget}>
         <PanelHeader>
           <PanelTitle>Recent registry activity</PanelTitle>
           <PanelMeta>

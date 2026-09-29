@@ -231,23 +231,22 @@ Single webpack build produces `html/`. From there, two distribution targets:
 ```sh
 yarn install
 yarn build:prod                       # webpack → html/
-cp -r html/*  beamterminal/app/
-cp src/app/shared/icons/logo-dex.svg beamterminal/app/logo.svg
+cp -r html/*  beamexplorer/app/      # webpack already copied favicon.svg (the DApp icon)
 
-cat > beamterminal/manifest.json <<EOF
+cat > beamexplorer/manifest.json <<EOF
 {
-  "name": "BeamTerminal",
-  "description": "Beam DEX terminal — pairs, charts, trades, swap.",
-  "icon": "localapp/app/logo.svg",
+  "name": "Beam Explorer",
+  "description": "Beam block explorer and DEX analytics — charts, blocks, pairs, swap.",
+  "icon": "localapp/app/favicon.svg",
   "url":  "localapp/app/index.html",
   "version": "1.0.<git rev-list --count HEAD>",
   "api_version":     "7.3",
   "min_api_version": "7.3",
-  "guid": "d5669ebc08394e15a394011a8020dd9a"
+  "guid": "727f1dff1d614d268f837bd18fdbcd22"
 }
 EOF
 
-(cd beamterminal && zip -r ../beamterminal.dapp ./*)
+(cd beamexplorer && zip -r ../beamexplorer.dapp ./*)
 ```
 
 The version segment is the commit count, so every build is uniquely versioned without manual bumps. The shaders bundled into the `.dapp` are `amm.wasm` (the primary AMM) and `dao-accumulator.wasm` (used by the dex-app shared chrome for staking-style UI components). See `src/app/core/shaderRegistry.ts`.

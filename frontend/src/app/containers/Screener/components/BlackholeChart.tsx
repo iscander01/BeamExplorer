@@ -149,6 +149,10 @@ interface Props {
    *  burned, click to open the asset). Only enabled in the expanded modal —
    *  15 icons don't fit a 320px grid cell, which keeps its colour legend. */
   showMarkers?: boolean;
+  /** The unwindowed series. A timeframe window opens each line on a synthetic
+   *  carried-forward point at its cutoff, so `series` alone can't say when an
+   *  asset was first burned; the popover reads that from here. */
+  history?: ReadonlyArray<ApiBlackholeSeries>;
 }
 
 /** One cumulative burn line per asset, on the keyed multi-line chart: aids are
@@ -159,6 +163,7 @@ export const BlackholeChart: React.FC<Props> = ({
   logScale = false,
   formatter = fmtNativeUnits,
   showMarkers = false,
+  history,
 }) => {
   const handleRef = useRef<KeyedChartHandle | null>(null);
   const markerNodes = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -329,6 +334,8 @@ export const BlackholeChart: React.FC<Props> = ({
   const hoverPos = hoverAid != null ? placedRef.current.get(hoverAid) : undefined;
   const hoverMeta = hoverAid != null ? metaByAid.get(hoverAid) : undefined;
   const hoverSeries = hoverAid != null ? series.find((s) => s.aid === hoverAid) : undefined;
+  const firstBurn =
+    (hoverAid != null ? history?.find((s) => s.aid === hoverAid)?.points[0] : undefined) ?? hoverSeries?.points[0];
   // Begin markers can sit anywhere; open the popover toward whichever side has
   // room (it spilled off the left edge when forced left for a left-side icon).
   const hoverRight = hoverPos != null && hoverPos.x + 12 + POPOVER_W <= (handleRef.current?.host.clientWidth ?? 0);
@@ -442,7 +449,7 @@ export const BlackholeChart: React.FC<Props> = ({
               </PopRow>
               <PopRow>
                 <span>First burn</span>
-                <span className="v">{fmtDayLocal(hoverSeries.points[0]!.ts)}</span>
+                <span className="v">{firstBurn ? fmtDayLocal(firstBurn.ts) : '—'}</span>
               </PopRow>
               {hoverMeta ? (
                 <PopRow>

@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { styled } from '@linaria/react';
 import { AssetLabel } from '@app/shared/components/AssetLabel';
 import type { ApiPair, ApiPairTier } from '../api/types';
 import { fmt$, fmtPrice, fmtPriceImpact, toGroths, toGrothsStr, fromGroths } from './format';
 import { Box, BoxHeader, Row, Input, TokenBadge, BadgeAssetIcon, InfoRow } from './amountBox';
-import { Btn, actionButtonState } from './modalChrome';
+import { Btn, WalletHint, actionButtonState } from './modalChrome';
 import { useWallet, invokeTrade } from '../wallet';
 import { useAssetColor } from '../assetColors';
 
@@ -128,7 +128,7 @@ function estimateOut(r1: number, r2: number, dx: number, fee: number): number {
 const TIER_FEE: Record<number, number> = { 0: 0.0005, 1: 0.003, 2: 0.01 };
 
 export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => {
-  const { headless, connecting, connect } = useWallet();
+  const { headless, support, connecting, connectFailed, connect } = useWallet();
 
   // direction:
   //   'buy_aid2'  -> user pays aid1, receives aid2 (default)
@@ -156,6 +156,14 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
   const [quoting, setQuoting] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
+  // Auto-clear timer for `feedback`; replaced by each new result, cleared on unmount.
+  const feedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (feedbackTimer.current !== null) clearTimeout(feedbackTimer.current);
+    },
+    [],
+  );
 
   const pay: Side =
     direction === 'buy_aid2'
@@ -197,9 +205,13 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
 
   const routing = candidates.length > 1;
   // Tier the swap will execute against: the authoritative quote's winner if we
-  // have one, else the local estimate's pick, else the only/declared tier.
-  const execKind = confirmedQuote?.kind ?? localBestKind ?? pair.kind;
-  const active = candidates.find((c) => c.kind === execKind) ?? candidates[0]!;
+  // have one, else the local estimate's pick, else the only/declared tier —
+  // but always one of the current candidates. `localBestKind` is set by an
+  // effect, so for one render after the candidates change it can still name a
+  // tier that is no longer routable.
+  const preferredKind = confirmedQuote?.kind ?? localBestKind ?? pair.kind;
+  const active = candidates.find((c) => c.kind === preferredKind) ?? candidates[0]!;
+  const execKind = active.kind;
   const { fee } = active;
   const reserves = useMemo(() => ({ r1: active.r1, r2: active.r2 }), [active.r1, active.r2]);
 
@@ -350,7 +362,11 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
     } finally {
       setExecuting(false);
       // Auto-clear after a few seconds.
-      setTimeout(() => setFeedback(null), 4000);
+      if (feedbackTimer.current !== null) clearTimeout(feedbackTimer.current);
+      feedbackTimer.current = setTimeout(() => {
+        feedbackTimer.current = null;
+        setFeedback(null);
+      }, 4000);
     }
   }, [amountIn, execKind, pay.aid, pay.decimals, receive.aid]);
 
@@ -424,6 +440,7 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
     disabledReason: !hasAmount ? 'Enter amount' : quoting && !confirmedQuote ? 'Fetching quote…' : null,
     actionLabel: 'Swap',
     connectLabel: 'Connect Wallet to Swap',
+    support,
   });
 
   return (
@@ -567,6 +584,7 @@ export const SwapPanel: React.FC<Props> = ({ pair, tiers, onPreviewChange }) => 
       <Btn type="button" variant={btn.variant} disabled={btn.disabled} onClick={headless ? onConnect : onSwap}>
         {btn.text}
       </Btn>
+      <WalletHint headless={headless} support={support} connecting={connecting} connectFailed={connectFailed} />
     </Panel>
   );
 };

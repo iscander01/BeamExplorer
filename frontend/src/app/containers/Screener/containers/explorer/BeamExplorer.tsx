@@ -160,6 +160,11 @@ const VIEW_PARAM_KEYS = [
   'plot',
 ] as const;
 
+// Height range and page size of the paged views (asset/contract history, the
+// hdrs window). They describe one object's paging, so go() resets them when
+// the type or id changes.
+const RANGE_PARAM_KEYS = ['hMin', 'hMax', 'nMaxTxs', 'nMaxOps'] as const;
+
 function parseView(sp: URLSearchParams): ViewState {
   const rawType = sp.get('type') ?? '';
   const type = (VIEW_TYPES.has(rawType) ? rawType : 'status') as ViewType;
@@ -1798,7 +1803,10 @@ function BlockView({ data, view, ctx }: { data: any; view: ViewState; ctx: Rende
                 delete rest.maxHeight;
                 const mh = k.minHeight ? <BlockLink h={k.minHeight} ctx={ctx} /> : '*';
                 const xh = k.maxHeight ? <BlockLink h={k.maxHeight} ctx={ctx} /> : '*';
-                const highlighted = kernelId && k.id === kernelId;
+                // The node accepts an uppercase kernel id (the wallet or a paste
+                // may send one) but always reports ids in lowercase.
+                const highlighted =
+                  !!kernelId && typeof k.id === 'string' && k.id.toLowerCase() === kernelId.toLowerCase();
                 return (
                   <tr key={i} style={highlighted ? { background: 'rgba(240, 165, 0, 0.12)' } : undefined}>
                     <td>
@@ -4336,27 +4344,68 @@ function WhatsNewModal({ onClose }: { onClose: () => void }): JSX.Element {
   );
 }
 
+type BlockQuery = { height: string } | { kernel: string };
+
+const KERNEL_ID_RE = /^[0-9a-f]{64}$/;
+
+// Read the search box as a block height or a kernel id, or null when it is
+// neither. Validation matters: the node only reads `kernel` when it is exactly
+// 64 hex chars and otherwise falls back to the latest block, so anything else
+// sent as a kernel would show the chain tip as if it were the match.
+// Spaces, dots, commas and underscores are ignored (as in BeamExplorer.htm
+// v0.8.4), so "3,863,512", "3.863.512" and a kernel pasted across a line break
+// all work; a 0x prefix is dropped from kernels.
+function parseBlockQuery(raw: string): BlockQuery | null {
+  const cleaned = raw.replace(/[\s.,_]/g, '').toLowerCase();
+  const hex = cleaned.replace(/^0x/, '');
+  if (KERNEL_ID_RE.test(hex)) return { kernel: hex };
+  // A 0x-prefixed number is hex, not a height. 15 digits stays within the
+  // safe-integer range.
+  if (hex === cleaned && /^\d{1,15}$/.test(cleaned)) return { height: String(Number(cleaned)) };
+  return null;
+}
+
+const SearchError = styled.span`
+  align-self: center;
+  white-space: nowrap;
+  font-size: 11px;
+  color: ${theme.color.danger};
+`;
+
 // Owns the input state so typing re-renders only this small form — the
 // explorer root may be showing a multi-thousand-row table at the time.
-function KernelSearch({ onSearch }: { onSearch: (q: string) => void }): JSX.Element {
+function KernelSearch({ onSearch }: { onSearch: (q: BlockQuery) => void }): JSX.Element {
   const [search, setSearch] = useState('');
+  const [invalid, setInvalid] = useState(false);
   const submit = (e: React.FormEvent): void => {
     e.preventDefault();
-    const q = search.trim();
-    if (q) onSearch(q);
+    if (search.trim() === '') return;
+    const parsed = parseBlockQuery(search);
+    setInvalid(parsed === null);
+    if (parsed) onSearch(parsed);
   };
   return (
     <SearchForm onSubmit={submit}>
       <Input
         value={search}
-        onChange={(e) => setSearch(e.target.value)}
+        onChange={(e) => {
+          setSearch(e.target.value);
+          setInvalid(false);
+        }}
         placeholder="Search kernel id or block height"
-        title="Enter a kernel id (hex) or a block height"
+        title="Enter a kernel id (64 hex chars) or a block height"
+        aria-invalid={invalid}
+        aria-describedby={invalid ? 'explorer-search-error' : undefined}
         style={{ fontSize: 12, padding: '4px 8px' }}
       />
       <Btn type="submit" style={{ padding: '4px 10px', fontSize: 11 }}>
         Search
       </Btn>
+      {invalid && (
+        <SearchError id="explorer-search-error" role="alert">
+          Not a block height or kernel id
+        </SearchError>
+      )}
     </SearchForm>
   );
 }
@@ -4391,15 +4440,23 @@ export const BeamExplorer: React.FC = () => {
   const go = useCallback(
     (patch: Partial<ViewState>, opts?: GoOptions): void => {
       const next: ViewState = { ...view, ...patch };
-      if (patch.type && patch.type !== view.type) {
+      const typeChanged = !!patch.type && patch.type !== view.type;
+      if (typeChanged) {
         if (patch.type !== 'block') {
           next.kernel = undefined;
           next.adj = undefined;
         }
-        if (patch.type !== 'asset' && patch.type !== 'contract') {
-          next.hMin = undefined;
-        }
         if (patch.type !== 'assets') next.q = undefined; // owner filter only applies to the assets list
+      }
+      // The range/paging params belong to the object being paged: « Older »
+      // on a contract sets its call-history hMax, which must not cut short the
+      // next contract's history or send the Headers tab back in time. Start a
+      // new type or id from its defaults unless the patch sets them itself
+      // (e.g. the block page's "Headers" button passes its own hMax).
+      if (typeChanged || ('id' in patch && patch.id !== view.id)) {
+        RANGE_PARAM_KEYS.forEach((k) => {
+          if (!(k in patch)) next[k] = undefined;
+        });
       }
       // A block is addressed by kernel *or* height, and the node resolves the
       // kernel first. Moving to a height (Prev/Next, a block link) must drop
@@ -4486,17 +4543,11 @@ export const BeamExplorer: React.FC = () => {
     [go, view.network, view.type],
   );
 
+  // KernelSearch has already validated and normalized the input.
   const onSearch = useCallback(
-    (q: string): void => {
-      // Tolerate copy-pasted block heights with thousands separators (e.g.
-      // "3,863,512" as rendered elsewhere in the terminal); kernel ids are hex
-      // and never contain these, so strip them only for the numeric test.
-      const cleaned = q.replace(/[\s,_]/g, '');
-      if (cleaned.length < 10 && /^\d+$/.test(cleaned)) {
-        go({ type: 'block', height: cleaned, kernel: undefined });
-      } else {
-        go({ type: 'block', kernel: q, height: undefined });
-      }
+    (q: BlockQuery): void => {
+      if ('kernel' in q) go({ type: 'block', kernel: q.kernel, height: undefined, adj: undefined });
+      else go({ type: 'block', height: q.height, kernel: undefined, adj: undefined });
     },
     [go],
   );

@@ -511,8 +511,23 @@ export const PairDetail: React.FC = () => {
 
   // When a specific tier is picked, fetch that tier; otherwise show combined.
   const tierId = selectedKind !== null && combined ? pairUrlId(combined.aid1, combined.aid2, selectedKind) : undefined;
-  const { data: tierPair } = usePair(tierId);
-  const pair = (selectedKind !== null ? tierPair : null) ?? combined;
+  const { data: tierPairData, error: tierError } = usePair(tierId);
+  // usePair keeps the previous id's data while the next one loads, so right
+  // after a tier switch `tierPairData` can still be the old tier. Only trust it
+  // once it is the tier the user picked.
+  const tierPair =
+    selectedKind !== null &&
+    combined &&
+    tierPairData &&
+    tierPairData.kind === selectedKind &&
+    tierPairData.aid1 === combined.aid1 &&
+    tierPairData.aid2 === combined.aid2
+      ? tierPairData
+      : null;
+  // False while a picked tier is still loading. Tier-dependent actions (the
+  // swap) wait for it rather than executing on combined.kind or the old tier.
+  const tierReady = selectedKind === null || tierPair !== null;
+  const pair = tierPair ?? combined;
   // Drives chart + trades: the selected tier, else the combined pair.
   const dataId = tierId ?? id;
   // OPT_COLOR for the pooled-token icons (header pair icons use IconsPair,
@@ -658,7 +673,7 @@ export const PairDetail: React.FC = () => {
                 {selectedKind === null && tiers.length > 1 ? (
                   <TiersBadge kinds={tiers.map((t) => t.kind)} />
                 ) : (
-                  <KindBadge kind={p.kind} />
+                  <KindBadge kind={selectedKind ?? p.kind} />
                 )}
               </TopTitle>
               <TopSubtitle>BEAM DEX</TopSubtitle>
@@ -917,7 +932,7 @@ export const PairDetail: React.FC = () => {
               <span className="val">
                 {selectedKind === null && tiers.length > 1
                   ? `Auto · ${tiers.map((t) => `${tierFeePct(t.kind).toFixed(2)}%`).join(' / ')}`
-                  : `${tierFeePct(p.kind).toFixed(2)}%`}
+                  : `${tierFeePct(selectedKind ?? p.kind).toFixed(2)}%`}
               </span>
             </StatRow>
             <StatRow>
@@ -934,11 +949,22 @@ export const PairDetail: React.FC = () => {
             </StatRow>
           </SidebarSection>
 
-          <SwapPanel
-            pair={p}
-            tiers={selectedKind === null ? combined?.tiers : undefined}
-            onPreviewChange={onPreviewChange}
-          />
+          {tierReady ? (
+            // Keyed by tier so a switch starts from a clean panel: no amount,
+            // quote or routed kind carried over from the previous tier.
+            <SwapPanel
+              key={selectedKind ?? 'auto'}
+              pair={p}
+              tiers={selectedKind === null ? combined?.tiers : undefined}
+              onPreviewChange={onPreviewChange}
+            />
+          ) : tierError ? (
+            <CenteredNote pad="24px 16px" size={13}>
+              Couldn&apos;t load the {tierFeePct(selectedKind ?? 0).toFixed(2)}% pool. Pick another tier.
+            </CenteredNote>
+          ) : (
+            <Loading size="sm" label="Loading fee tier…" />
+          )}
         </Sidebar>
       </Layout>
     </Page>

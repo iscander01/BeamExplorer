@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { styled } from '@linaria/react';
+import { WALLET_DOWNLOADS_URL, WEB_WALLET_URL, type TradeSupport } from '../wallet';
 
 // Shared chrome for modal surfaces across the app: the centered overlay, the
 // close button, the four-variant action button, the fee-tier table, and the
@@ -126,11 +127,15 @@ export function actionButtonState(opts: {
   actionLabel: string;
   /** Connect-button copy; surfaces may name the action ("Connect Wallet to Swap"). */
   connectLabel?: string;
+  /** useWallet().support. 'none' (no signing wallet can exist in this browser)
+   *  replaces the connect button with a disabled notice. Defaults to connectable. */
+  support?: TradeSupport;
 }): ActionBtnState {
   const { feedback, headless, connecting, executing, busyLabel, disabledReason, actionLabel } = opts;
   if (feedback?.kind === 'success') return { text: feedback.text, variant: 'success', disabled: true };
   if (feedback?.kind === 'error') return { text: feedback.text, variant: 'error', disabled: true };
   if (headless) {
+    if (opts.support === 'none') return { text: 'BEAM wallet required', variant: 'muted', disabled: true };
     return connecting
       ? { text: 'Connecting…', variant: 'muted', disabled: true }
       : { text: opts.connectLabel ?? 'Connect Wallet', variant: 'primary', disabled: false };
@@ -139,3 +144,52 @@ export function actionButtonState(opts: {
   if (disabledReason) return { text: disabledReason, variant: 'muted', disabled: true };
   return { text: actionLabel, variant: 'primary', disabled: false };
 }
+
+const HintBox = styled.div`
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.55);
+  text-align: center;
+  a {
+    color: var(--color-green);
+    text-decoration: underline;
+  }
+`;
+
+/**
+ * Explains a disconnected action button on the public web: where no signing
+ * wallet can run it links to the wallet downloads, and in Chrome it points at
+ * the BEAM Web Wallet extension while a connect is pending or after it failed.
+ * Renders nothing once connected, and never inside the BEAM wallet itself.
+ */
+export const WalletHint: React.FC<{
+  headless: boolean;
+  support: TradeSupport;
+  connecting: boolean;
+  connectFailed: boolean;
+}> = ({ headless, support, connecting, connectFailed }) => {
+  if (!headless || support === 'wallet') return null;
+  if (support === 'none') {
+    return (
+      <HintBox>
+        Trading needs the BEAM wallet: open this page from the BEAM desktop wallet, or use desktop Chrome with the BEAM
+        Web Wallet extension.{' '}
+        <a href={WALLET_DOWNLOADS_URL} target="_blank" rel="noopener noreferrer">
+          Get BEAM wallet
+        </a>
+      </HintBox>
+    );
+  }
+  if (!connecting && !connectFailed) return null;
+  return (
+    <HintBox>
+      {connecting
+        ? 'Approve the request in the BEAM Web Wallet extension.'
+        : 'No BEAM Web Wallet answered, or the request was rejected.'}{' '}
+      <a href={WEB_WALLET_URL} target="_blank" rel="noopener noreferrer">
+        Install BEAM Web Wallet
+      </a>
+    </HintBox>
+  );
+};

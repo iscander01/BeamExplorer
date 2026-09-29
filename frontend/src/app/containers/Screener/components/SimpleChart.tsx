@@ -89,6 +89,10 @@ function toLineData(series: ReadonlyArray<ApiChartPoint>, scale: number): LineDa
 // shows negative axis labels even when every value is >= 0 (counts, totals,
 // hashrate, prices…). When the data is non-negative, floor the visible range at
 // 0 (with a little symmetric headroom); genuine negative data is left untouched.
+// Callers pass `nonNeg` false on a log axis: there 0 maps to the bottom of the
+// log range (~1e-4), so the floor would stretch the axis over a dozen empty
+// decades and squash the data into the top of the plot — and a log axis never
+// shows negative labels anyway.
 function nonNegAutoscale(base: () => AutoscaleInfo | null, nonNeg: boolean): AutoscaleInfo | null {
   const info = base();
   if (!info || !nonNeg || info.priceRange.minValue < 0) return info;
@@ -144,6 +148,10 @@ export const SimpleChart: React.FC<Props> = ({
   // autoscaleInfoProvider to floor the axis at 0 — see nonNegAutoscale).
   const nonNegRef = useRef(true);
   const overlayNonNegRef = useRef(true);
+  // Read by the same providers, which skip the 0 floor on a log axis. Set during
+  // render so it is current before the mode effect below re-runs the autoscale.
+  const logScaleRef = useRef(logScale);
+  logScaleRef.current = logScale;
 
   useEffect(() => {
     const el = innerRef.current;
@@ -173,7 +181,8 @@ export const SimpleChart: React.FC<Props> = ({
       bottomColor: 'rgba(0, 246, 210, 0.02)',
       lineWidth: 2,
       priceFormat: { type: 'custom', formatter, minMove: 0.000001 },
-      autoscaleInfoProvider: (base: () => AutoscaleInfo | null) => nonNegAutoscale(base, nonNegRef.current),
+      autoscaleInfoProvider: (base: () => AutoscaleInfo | null) =>
+        nonNegAutoscale(base, nonNegRef.current && !logScaleRef.current),
     });
     const teardown = onChartReadyRef.current?.(chart, el);
     return () => {
@@ -231,7 +240,8 @@ export const SimpleChart: React.FC<Props> = ({
           priceLineVisible: false,
           lastValueVisible: false,
           crosshairMarkerVisible: false,
-          autoscaleInfoProvider: (base: () => AutoscaleInfo | null) => nonNegAutoscale(base, overlayNonNegRef.current),
+          autoscaleInfoProvider: (base: () => AutoscaleInfo | null) =>
+            nonNegAutoscale(base, overlayNonNegRef.current && !logScaleRef.current),
         });
       }
       const overlayData = toLineData(overlaySeries, scale);

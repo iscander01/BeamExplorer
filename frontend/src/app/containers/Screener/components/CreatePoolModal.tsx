@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { styled } from '@linaria/react';
 import { assetLabel } from '@app/shared/components/AssetLabel';
 import type { ApiAssetListEntry } from '../api/types';
@@ -134,7 +134,7 @@ export const CreatePoolModal: React.FC<Props> = ({
   lockPair = false,
   onClose,
 }) => {
-  const { headless, connecting, connect } = useWallet();
+  const { headless, support, connecting, connect } = useWallet();
   const { data } = useSharedAssets();
   const assets = useMemo(() => (data?.assets ?? []).slice().sort((a, b) => a.aid - b.aid), [data]);
 
@@ -152,6 +152,38 @@ export const CreatePoolModal: React.FC<Props> = ({
   const [kind, setKind] = useState<0 | 1 | 2>(initialKind ?? 1);
   const [executing, setExecuting] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
+  // One timer for the post-submit follow-up: close after a success, clear an
+  // error / "Cancelled" after a few seconds so the action button unlocks.
+  // Replaced by each new result and cleared on unmount.
+  const feedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (feedbackTimer.current !== null) clearTimeout(feedbackTimer.current);
+    },
+    [],
+  );
+  const showFeedback = useCallback(
+    (next: { kind: 'success' | 'error'; text: string }): void => {
+      if (feedbackTimer.current !== null) clearTimeout(feedbackTimer.current);
+      setFeedback(next);
+      feedbackTimer.current = setTimeout(
+        () => {
+          feedbackTimer.current = null;
+          if (next.kind === 'success') onClose();
+          else setFeedback(null);
+        },
+        next.kind === 'success' ? 1200 : 4000,
+      );
+    },
+    [onClose],
+  );
+  // Changing the pair or tier after a failure retries straight away.
+  const clearError = (): void => {
+    if (feedback?.kind !== 'error') return;
+    if (feedbackTimer.current !== null) clearTimeout(feedbackTimer.current);
+    feedbackTimer.current = null;
+    setFeedback(null);
+  };
 
   const label = (aid: number): string => {
     const a = assets.find((x) => x.aid === aid);
@@ -170,22 +202,23 @@ export const CreatePoolModal: React.FC<Props> = ({
     const loAid = Math.min(aid1, aid2);
     const hiAid = Math.max(aid1, aid2);
     setExecuting(true);
+    if (feedbackTimer.current !== null) clearTimeout(feedbackTimer.current);
+    feedbackTimer.current = null;
     setFeedback(null);
     try {
       const res = await invokeCreatePool({ aid1: loAid, aid2: hiAid, kind });
       if (res?.txid) {
-        setFeedback({ kind: 'success', text: 'Pool creation submitted' });
-        setTimeout(() => onClose(), 1200);
+        showFeedback({ kind: 'success', text: 'Pool creation submitted' });
       } else {
-        setFeedback({ kind: 'error', text: 'Cancelled' });
+        showFeedback({ kind: 'error', text: 'Cancelled' });
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setFeedback({ kind: 'error', text: msg.slice(0, 90) });
+      showFeedback({ kind: 'error', text: msg.slice(0, 90) });
     } finally {
       setExecuting(false);
     }
-  }, [aid1, aid2, kind, onClose]);
+  }, [aid1, aid2, kind, showFeedback]);
 
   const btn = actionButtonState({
     feedback,
@@ -195,6 +228,7 @@ export const CreatePoolModal: React.FC<Props> = ({
     busyLabel: 'Submitting…',
     disabledReason: poolExists ? 'Pool already exists' : !canSubmit ? 'Select two assets' : null,
     actionLabel: 'Create pool',
+    support,
   });
 
   return (
@@ -210,7 +244,10 @@ export const CreatePoolModal: React.FC<Props> = ({
         <AssetSelect
           label="First asset"
           value={aid1}
-          onChange={setAid1}
+          onChange={(v) => {
+            clearError();
+            setAid1(v);
+          }}
           options={assets}
           optionLabel={label}
           locked={lockPair}
@@ -218,7 +255,10 @@ export const CreatePoolModal: React.FC<Props> = ({
         <AssetSelect
           label="Second asset"
           value={aid2}
-          onChange={setAid2}
+          onChange={(v) => {
+            clearError();
+            setAid2(v);
+          }}
           options={assets}
           optionLabel={label}
           locked={lockPair}
@@ -229,7 +269,15 @@ export const CreatePoolModal: React.FC<Props> = ({
           <span className="fieldLabel">Fee tier</span>
           <TierRow>
             {FEE_TIERS.map((t) => (
-              <TierPill key={t.kind} type="button" active={kind === t.kind} onClick={() => setKind(t.kind)}>
+              <TierPill
+                key={t.kind}
+                type="button"
+                active={kind === t.kind}
+                onClick={() => {
+                  clearError();
+                  setKind(t.kind);
+                }}
+              >
                 {t.label}
               </TierPill>
             ))}

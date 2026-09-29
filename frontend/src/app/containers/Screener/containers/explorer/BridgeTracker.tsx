@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loading } from '@app/shared/components/Loading';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { styled } from '@linaria/react';
+import { ROUTES } from '@app/shared/constants';
 import { api } from '@app/containers/Screener/api/client';
 import { usePolled } from '@app/containers/Screener/hooks';
 import { fmt$ } from '@app/containers/Screener/components/format';
@@ -190,7 +191,47 @@ const LinkChip = styled.a`
   white-space: nowrap;
   transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
 
-  &:hover,
+  /* Separate rules, not one ":hover, :focus-visible" list: Chrome 83 (the
+     wallet) doesn't know :focus-visible and would drop the list, hover included. */
+  &:hover {
+    color: ${theme.color.accent};
+    border-color: ${theme.color.accent};
+    background: rgba(0, 246, 210, 0.08);
+    text-decoration: none;
+  }
+  &:focus-visible {
+    color: ${theme.color.accent};
+    border-color: ${theme.color.accent};
+    background: rgba(0, 246, 210, 0.08);
+    text-decoration: none;
+  }
+`;
+
+// LinkChip's look for a Beam block, opened in this site's own block explorer
+// rather than an external one: same reason as NavChip below.
+const BlockChip = styled(Link)`
+  display: inline-block;
+  padding: 3px 8px;
+  border: 1px solid ${theme.color.border};
+  border-radius: 5px;
+  font-family: ${theme.font.mono};
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+
+  &,
+  &:link,
+  &:visited {
+    color: ${theme.color.textDim};
+    text-decoration: none;
+  }
+  &:hover {
+    color: ${theme.color.accent};
+    border-color: ${theme.color.accent};
+    background: rgba(0, 246, 210, 0.08);
+    text-decoration: none;
+  }
   &:focus-visible {
     color: ${theme.color.accent};
     border-color: ${theme.color.accent};
@@ -217,7 +258,11 @@ const NavChip = styled.button`
   cursor: pointer;
   transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
 
-  &:hover,
+  &:hover {
+    color: ${theme.color.accent};
+    border-color: ${theme.color.accent};
+    background: rgba(0, 246, 210, 0.08);
+  }
   &:focus-visible {
     color: ${theme.color.accent};
     border-color: ${theme.color.accent};
@@ -439,8 +484,10 @@ function fmtDuration(secs: number): string {
   return `${(secs / 86400).toFixed(1)}d`;
 }
 
-function beamBlockUrl(height: number): string {
-  return `https://explorer.0xmx.net/?network=mainnet&type=block&height=${height}`;
+// In-app route to the block explorer's block view. A relative route, not an
+// absolute URL: the same bundle also runs inside the BEAM wallet as a .dapp.
+function beamBlockTo(height: number): string {
+  return `${ROUTES.NAV.EXPLORER_BEAM}?network=mainnet&type=block&height=${height}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -736,24 +783,12 @@ const LookupModal: React.FC<{
                 </LinkChip>
               )}
               {!m.src_tx && (m.src_call_height ?? m.src_height) !== null && (
-                <LinkChip
-                  href={beamBlockUrl((m.src_call_height ?? m.src_height) as number)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Beam block ↗
-                </LinkChip>
+                <BlockChip to={beamBlockTo((m.src_call_height ?? m.src_height) as number)}>Beam block</BlockChip>
               )}
               {m.delivered_height !== null && (
-                <LinkChip href={beamBlockUrl(m.delivered_height)} target="_blank" rel="noopener noreferrer">
-                  Delivery block ↗
-                </LinkChip>
+                <BlockChip to={beamBlockTo(m.delivered_height)}>Delivery block</BlockChip>
               )}
-              {m.claimed_height !== null && (
-                <LinkChip href={beamBlockUrl(m.claimed_height)} target="_blank" rel="noopener noreferrer">
-                  Claim block ↗
-                </LinkChip>
-              )}
+              {m.claimed_height !== null && <BlockChip to={beamBlockTo(m.claimed_height)}>Claim block</BlockChip>}
             </LinkRow>
           </ResultCard>
         ))}
@@ -805,7 +840,14 @@ const BridgeTracker: React.FC = () => {
   const [dir, setDir] = useState<'asc' | 'desc'>('desc');
   const [offset, setOffset] = useState(0);
 
+  // Bumped per request (and on unmount). Changing filters or paging quickly
+  // leaves older requests in flight; only the newest may write the table or
+  // clear the loading flag, so a slow earlier response can't show rows for
+  // filters the controls no longer say.
+  const msgsGenRef = useRef(0);
   const loadMessages = useCallback(async () => {
+    msgsGenRef.current += 1;
+    const gen = msgsGenRef.current;
     setLoadingMsgs(true);
     try {
       const res = await api.bridgeMessages({
@@ -817,17 +859,23 @@ const BridgeTracker: React.FC = () => {
         limit: PAGE_SIZE,
         offset,
       });
+      if (gen !== msgsGenRef.current) return;
       setMsgs(res);
       setMsgsErr(null);
     } catch (err) {
+      if (gen !== msgsGenRef.current) return;
       setMsgsErr(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoadingMsgs(false);
+      if (gen === msgsGenRef.current) setLoadingMsgs(false);
     }
   }, [fBridge, fDirection, fStatus, sort, dir, offset]);
 
   useEffect(() => {
     void loadMessages();
+    // Superseded or unmounted: drop whatever that request returns.
+    return () => {
+      msgsGenRef.current += 1;
+    };
   }, [loadMessages]);
 
   const totals = useMemo(() => {
@@ -1095,34 +1143,28 @@ const BridgeTracker: React.FC = () => {
                             </LinkChip>
                           )}
                           {!m.src_tx && h !== null && (
-                            <LinkChip
-                              href={beamBlockUrl(h)}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                            <BlockChip
+                              to={beamBlockTo(h)}
                               title={`Beam block ${h} — paste this height into “Check my transfer”`}
                             >
-                              block {h} ↗
-                            </LinkChip>
+                              block {h}
+                            </BlockChip>
                           )}
                           {m.delivered_height !== null && (
-                            <LinkChip
-                              href={beamBlockUrl(m.delivered_height)}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                            <BlockChip
+                              to={beamBlockTo(m.delivered_height)}
                               title={beamStepTitle('Delivered to Beam', m.delivered_height, m.delivered_ts, m.src_ts)}
                             >
-                              delivered {m.delivered_height} ↗
-                            </LinkChip>
+                              delivered {m.delivered_height}
+                            </BlockChip>
                           )}
                           {m.claimed_height !== null && (
-                            <LinkChip
-                              href={beamBlockUrl(m.claimed_height)}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                            <BlockChip
+                              to={beamBlockTo(m.claimed_height)}
                               title={beamStepTitle('Claimed on Beam', m.claimed_height, m.claimed_ts, m.delivered_ts)}
                             >
-                              claimed {m.claimed_height} ↗
-                            </LinkChip>
+                              claimed {m.claimed_height}
+                            </BlockChip>
                           )}
                           {!m.settle_tx && !m.src_tx && h === null && '—'}
                         </RefCell>
